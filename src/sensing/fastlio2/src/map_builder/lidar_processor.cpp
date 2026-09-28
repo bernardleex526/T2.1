@@ -309,7 +309,16 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
         const PointType &norm_p = m_effect_norm_vec->points[i];
         Eigen::Vector3d laser_p_vec(laser_p.x, laser_p.y, laser_p.z);
         Eigen::Vector3d norm_vec(norm_p.x, norm_p.y, norm_p.z);
-        Eigen::Matrix<double, 1, 3> B = -norm_vec.transpose() * state.r_wi * Sophus::SO3d::hat(state.r_il * laser_p_vec + state.t_wi);
+        // D1 fix: the lever arm from the body/IMU frame to the LiDAR frame is t_il, not
+        // the world position t_wi. The residual above (see point_world_vec) is
+        //   f = n^T * ( R_wi * (R_il * p_l + t_il) + t_wi ) + d,
+        // so d(hat) wrt the rotation perturbation delta_theta (r_wi = R_wi * Exp(delta)) is
+        //   d f / d delta = -n^T * R_wi * hat(R_il * p_l + t_il).
+        // Upstream hku-mars FAST_LIO (laserMapping.cpp) uses offset_T_L_I (== t_il) here,
+        // confirming the t_il form. Using t_wi made the rotational Jacobian wrong by a factor
+        // that grows with the distance of the map origin from the sensor (337% at ||t_wi||=11.7m),
+        // which was the dominant source of the observed attitude/position drift.
+        Eigen::Matrix<double, 1, 3> B = -norm_vec.transpose() * state.r_wi * Sophus::SO3d::hat(state.r_il * laser_p_vec + state.t_il);
         J.block<1, 3>(0, 0) = B;
         J.block<1, 3>(0, 3) = norm_vec.transpose();
         if (m_config.esti_il)
