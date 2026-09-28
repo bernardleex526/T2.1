@@ -235,6 +235,14 @@ private:
                 std::vector<double> ext_il_vec = config["ext_il"].as<std::vector<double>>();
                 V3D t_il(ext_il_vec[0], ext_il_vec[1], ext_il_vec[2]);
                 Eigen::Quaterniond q_il(ext_il_vec[6], ext_il_vec[3], ext_il_vec[4], ext_il_vec[5]);
+                // The extrinsic is documented and consumed as a ROTATION, so q_il must be
+                // unit-norm before toRotationMatrix(): Eigen's conversion assumes |q| = 1 and
+                // otherwise returns |q|^2 * Rot(q), i.e. a matrix that is NOT orthogonal.
+                // A yaml-rounded quaternion (e.g. (0,-0.7071068,0,0.7071068): |q|^2 = 1+5.3e-8)
+                // then makes r_il violate Sophus' isOrthogonal() tolerance (1e-10) and the
+                // estimator aborts in State::operator- (SO3d(r_il^T r_il)). Normalise here so
+                // every r_il consumer sees an exact rotation, whatever the config precision.
+                if (q_il.norm() > 0.0) q_il.normalize();
                 m_builder_config.r_il = q_il.toRotationMatrix();
                 m_builder_config.t_il = t_il;
             } else {
@@ -245,6 +253,7 @@ private:
                 std::vector<double> ext_lc_vec = config["ext_lc"].as<std::vector<double>>();
                 V3D t_lc(ext_lc_vec[0], ext_lc_vec[1], ext_lc_vec[2]);
                 Eigen::Quaterniond q_lc(ext_lc_vec[6], ext_lc_vec[3], ext_lc_vec[4], ext_lc_vec[5]);
+                if (q_lc.norm() > 0.0) q_lc.normalize();   // same reason as q_il above
                 m_builder_config.r_cl = q_lc.toRotationMatrix().transpose();
                 m_builder_config.t_cl = -m_builder_config.r_cl * t_lc;
             } else {
