@@ -5,7 +5,16 @@ local_frame: odom
 
 key_pose_delta_deg: 10
 key_pose_delta_trans: 0.5
-loop_search_radius: 1.0
+# D3 fix: loop_search_radius is the radius (m) in which keyframe poses are proposed as loop
+# candidates. It must exceed the drift accumulated since the last visit of the same place;
+# it is a drift-dependent SEARCH bound, NOT a precision parameter (it does not affect the
+# pose accuracy of an accepted loop, only which candidates are considered).
+# 1.0 m was below the observed drift of this dataset (raw LIO loop return error 5.804 m over a
+# 134.48 m path, 4.3%), so the genuine global loop was never proposed: only 2 spurious pairs
+# anchored on keyframe 0 were found, both < 1 m apart. With 8.0 m the true global loop
+# kf61 <-> kf359 (2.010 m inconsistency) is detected. Cost of a larger radius is only extra
+# ICP attempts (bounded by loop_score_tresh / min_loop_detect_duration), so 8.0 m is safe.
+loop_search_radius: 8.0
 loop_time_tresh: 60.0
 loop_score_tresh: 0.15
 loop_submap_half_range: 5

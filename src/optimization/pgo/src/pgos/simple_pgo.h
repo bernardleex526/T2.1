@@ -36,7 +36,7 @@ struct Config
 {
     double key_pose_delta_deg = 10;
     double key_pose_delta_trans = 1.0;
-    double loop_search_radius = 1.0;
+    double loop_search_radius = 8.0; // D3: must exceed accumulated drift; mirrors pgo.yaml
     double loop_time_tresh = 60.0;
     double loop_score_tresh = 0.15;
     int loop_submap_half_range = 5;
