@@ -212,7 +212,7 @@ void IESKF::update()
     // (the previous code built m_P from H's initialiser in that case, resetting P to
     //  L*I*L^T, and would now build it from a zero matrix).
 
-    if (m_reject_total != m_reject_reported || (m_update_calls % 1000) == 0)
+    if (m_reject_total != m_reject_reported || (m_update_calls % 100) == 0)
     {
         m_reject_reported = m_reject_total;
         std::cerr << "[ieskf] updates=" << m_update_calls << " rejected=" << m_reject_total
