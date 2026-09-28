@@ -1,9 +1,9 @@
 #pragma once
 #include "commons.h"
+#include "pgos/loop_closure.h"
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/registration/icp.h>
 #include <gtsam/geometry/Rot3.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/ISAM2.h>
@@ -38,10 +38,29 @@ struct Config
     double key_pose_delta_trans = 1.0;
     double loop_search_radius = 8.0; // D3: must exceed accumulated drift; mirrors pgo.yaml
     double loop_time_tresh = 60.0;
-    double loop_score_tresh = 0.15;
     int loop_submap_half_range = 5;
     double submap_resolution = 0.1;
     double min_loop_detect_duration = 10.0;
+
+    // ===== STEP 1+2 front end =====
+    // Two candidate detectors, either or both active:
+    //   loop_enable_scan_context - Scan Context global descriptor retrieval. NOT bounded by
+    //     loop_search_radius (that is the point: it must find revisits the drifted Euclidean
+    //     search misses); bounded instead by sc.exclude_recent and loop_time_tresh.
+    //   loop_enable_radius_search - the original Euclidean radius search over keyframe
+    //     positions, kept as a fallback/complement.  Its candidates get no yaw prior because
+    //     a drifted position carries no usable relative-yaw information.
+    bool loop_enable_scan_context = true;
+    bool loop_enable_radius_search = true;
+    // Registrations actually attempted per detection event (after ranking by descriptor
+    // distance).  Every evaluated candidate is logged; accepted loops additionally need a
+    // free slot, capped by max_accepted_loops_per_query.
+    int max_loop_candidates_per_query = 3;
+    int max_accepted_loops_per_query = 1;
+    int loop_source_submap_half_range = 0;
+    pgo_loop::ScanContextConfig sc;
+    pgo_loop::RegistrationConfig reg;
+    pgo_loop::GateConfig gate;
 
     // ===== D2 fix: loop-closure noise model =====
     // Standard deviations (NOT variances) of the loop BetweenFactor, in SI units:
@@ -71,6 +90,11 @@ public:
 
     void searchForLoopPairs();
 
+    // STEP 1+2 front-end accounting line (one per keyframe, see [PGO][sc] in the run log).
+    void printFrontEndLine(size_t cur_idx, const char *status, size_t sc_hits, size_t sc_passing,
+                           size_t proposed, size_t radius_proposed, int evaluated, int accepted,
+                           double best_dist, double desc_ms, double query_ms);
+
     void smoothAndUpdate();
 
     CloudType::Ptr getSubMap(int idx, int half_range, double resolution);
@@ -90,5 +114,22 @@ private:
     std::shared_ptr<gtsam::ISAM2> m_isam2;
     gtsam::Values m_initial_values;
     gtsam::NonlinearFactorGraph m_graph;
-    pcl::IterativeClosestPoint<PointType, PointType> m_icp;
+    // STEP 1+2: Scan Context descriptor database, index-aligned with m_key_poses.
+    std::unique_ptr<pgo_loop::ScanContextDB> m_sc_db;
+    // Cumulative front-end accounting, printed on every detection event so the run log carries
+    // both the per-event decision and the run totals (see [PGO][sc] lines).
+    struct FrontEndStats
+    {
+        long events = 0;        // detection events that passed min_loop_detect_duration
+        long proposed = 0;      // loop candidates proposed by either detector (after dedup)
+        long temporal = 0;      // ... of which dropped by the loop_time_tresh guard
+        long evaluated = 0;     // candidates that actually went through the registration cascade
+        long accepted = 0;      // ... and passed every gate
+        long rejected = 0;      // ... and failed at least one gate
+        double t_desc_ms = 0;   // Scan Context descriptor build (once per keyframe)
+        double t_query_ms = 0;  // Scan Context DB query (once per detection event)
+        double t_coarse_ms = 0;
+        double t_fine_ms = 0;
+        double t_gates_ms = 0;
+    } m_fe;
 };

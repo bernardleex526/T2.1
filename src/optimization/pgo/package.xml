@@ -20,7 +20,8 @@
   <depend>visualization_msgs</depend>
   <depend>interface</depend>
   <depend>GTSAM</depend>
-  <!-- Vendored Scan Context descriptor -->
+  <!-- STEP 1+2 loop-closure front end -->
+  <depend>fast_gicp</depend>
   <depend>cv_bridge</depend>
   <depend>libopencv-dev</depend>
   <depend>nanoflann</depend>

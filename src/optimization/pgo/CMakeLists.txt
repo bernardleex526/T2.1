@@ -37,9 +37,11 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(interface REQUIRED)
 find_package(yaml-cpp REQUIRED)
-# Vendored Scan Context descriptor (see src/scan_context/Scancontext.h for provenance).
+# STEP 1+2 loop-closure front end.
+#   fast_gicp : coarse registration stage (SMRT-AIST fast_gicp, BSD)
 #   cv_bridge / OpenCV : only needed because the vendored Scan Context header includes them;
 #                        no OpenCV or cv_bridge symbol is called, so they are include-only.
+find_package(fast_gicp REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
 
@@ -54,11 +56,13 @@ include_directories(
 
 set(SRC_LIST src/pgos/commons.cpp
              src/pgos/simple_pgo.cpp
+             src/pgos/loop_closure.cpp
              src/scan_context/Scancontext.cpp)
 
 add_executable(pgo_node src/pgo_node.cpp ${SRC_LIST})
 ament_target_dependencies(pgo_node rclcpp std_msgs sensor_msgs nav_msgs message_filters pcl_conversions tf2_ros geometry_msgs visualization_msgs interface GTSAM cv_bridge)
-target_link_libraries(pgo_node ${PCL_LIBRARIES} gtsam yaml-cpp)
+target_include_directories(pgo_node PRIVATE ${fast_gicp_INCLUDE_DIRS})
+target_link_libraries(pgo_node ${PCL_LIBRARIES} gtsam yaml-cpp ${fast_gicp_LIBRARIES})
 
 
 install(TARGETS pgo_node DESTINATION lib/${PROJECT_NAME})

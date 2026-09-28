@@ -255,10 +255,73 @@ private:
         m_pgo_config.key_pose_delta_trans = config["key_pose_delta_trans"].as<double>();
         m_pgo_config.loop_search_radius = config["loop_search_radius"].as<double>();
         m_pgo_config.loop_time_tresh = config["loop_time_tresh"].as<double>();
-        m_pgo_config.loop_score_tresh = config["loop_score_tresh"].as<double>();
         m_pgo_config.loop_submap_half_range = config["loop_submap_half_range"].as<int>();
         m_pgo_config.submap_resolution = config["submap_resolution"].as<double>();
         m_pgo_config.min_loop_detect_duration = config["min_loop_detect_duration"].as<double>();
+        // STEP 1+2 front end. Optional keys - the documented defaults in Config are used when a
+        // key is absent, so older config files still load.
+        if (config["loop_enable_scan_context"])
+            m_pgo_config.loop_enable_scan_context = config["loop_enable_scan_context"].as<bool>();
+        if (config["loop_enable_radius_search"])
+            m_pgo_config.loop_enable_radius_search = config["loop_enable_radius_search"].as<bool>();
+        if (config["max_loop_candidates_per_query"])
+            m_pgo_config.max_loop_candidates_per_query = config["max_loop_candidates_per_query"].as<int>();
+        if (config["max_accepted_loops_per_query"])
+            m_pgo_config.max_accepted_loops_per_query = config["max_accepted_loops_per_query"].as<int>();
+        if (config["loop_source_submap_half_range"])
+            m_pgo_config.loop_source_submap_half_range = config["loop_source_submap_half_range"].as<int>();
+        // Scan Context descriptor
+        if (config["sc_num_ring"]) m_pgo_config.sc.num_ring = config["sc_num_ring"].as<int>();
+        if (config["sc_num_sector"]) m_pgo_config.sc.num_sector = config["sc_num_sector"].as<int>();
+        if (config["sc_max_radius"]) m_pgo_config.sc.max_radius_m = config["sc_max_radius"].as<double>();
+        if (config["sc_lidar_height"]) m_pgo_config.sc.lidar_height_m = config["sc_lidar_height"].as<double>();
+        if (config["sc_downsample_resolution"]) m_pgo_config.sc.downsample_resolution_m = config["sc_downsample_resolution"].as<double>();
+        if (config["sc_dist_thresh"]) m_pgo_config.sc.dist_thresh = config["sc_dist_thresh"].as<double>();
+        if (config["sc_num_candidates"]) m_pgo_config.sc.num_candidates = config["sc_num_candidates"].as<int>();
+        if (config["sc_exclude_recent"]) m_pgo_config.sc.exclude_recent = config["sc_exclude_recent"].as<int>();
+        // coarse stage
+        if (config["coarse_voxel_resolution"]) m_pgo_config.reg.coarse_voxel_resolution_m = config["coarse_voxel_resolution"].as<double>();
+        if (config["coarse_max_corr_dist"]) m_pgo_config.reg.coarse_max_corr_dist_m = config["coarse_max_corr_dist"].as<double>();
+        if (config["coarse_max_iterations"]) m_pgo_config.reg.coarse_max_iterations = config["coarse_max_iterations"].as<int>();
+        if (config["coarse_max_rmse"]) m_pgo_config.reg.coarse_max_rmse_m = config["coarse_max_rmse"].as<double>();
+        // fine stage
+        if (config["fine_voxel_resolution"]) m_pgo_config.reg.fine_voxel_resolution_m = config["fine_voxel_resolution"].as<double>();
+        if (config["fine_max_corr_dist"]) m_pgo_config.reg.fine_max_corr_dist_m = config["fine_max_corr_dist"].as<double>();
+        if (config["fine_max_iterations"]) m_pgo_config.reg.fine_max_iterations = config["fine_max_iterations"].as<int>();
+        if (config["fine_max_rmse"]) m_pgo_config.reg.fine_max_rmse_m = config["fine_max_rmse"].as<double>();
+        if (config["fine_normal_search_radius"]) m_pgo_config.reg.normal_search_radius_m = config["fine_normal_search_radius"].as<double>();
+        if (config["correspondence_randomness"]) m_pgo_config.reg.correspondence_randomness = config["correspondence_randomness"].as<int>();
+        // gates
+        if (config["overlap_radius"]) m_pgo_config.gate.overlap_radius_m = config["overlap_radius"].as<double>();
+        if (config["overlap_radius_2"]) m_pgo_config.gate.overlap_radius_2_m = config["overlap_radius_2"].as<double>();
+        if (config["overlap_radius_3"]) m_pgo_config.gate.overlap_radius_3_m = config["overlap_radius_3"].as<double>();
+        if (config["min_overlap_ratio"]) m_pgo_config.gate.min_overlap_ratio = config["min_overlap_ratio"].as<double>();
+        if (config["degeneracy_gate_enabled"]) m_pgo_config.gate.degeneracy_gate_enabled = config["degeneracy_gate_enabled"].as<bool>();
+        if (config["degeneracy_min_eig_ratio"]) m_pgo_config.gate.min_eig_ratio = config["degeneracy_min_eig_ratio"].as<double>();
+        // Legacy key: the pre-STEP-1+2 single acceptance gate, a PCL ICP fitness score, i.e. a
+        // MEAN SQUARED residual in m^2.  Superseded by coarse_max_rmse / fine_max_rmse [m].
+        // Still honoured (the eval driver's --loop-score-thresh writes this key) by mapping it
+        // onto the fine gate only where fine_max_rmse was not set explicitly.
+        if (config["loop_score_tresh"])
+        {
+            const double legacy = config["loop_score_tresh"].as<double>();
+            if (!config["fine_max_rmse"])
+            {
+                m_pgo_config.reg.fine_max_rmse_m = std::sqrt(legacy);
+                RCLCPP_WARN(this->get_logger(),
+                            "DEPRECATED config key 'loop_score_tresh' (%.4f m^2) present and "
+                            "'fine_max_rmse' absent: using fine_max_rmse = sqrt(loop_score_tresh) "
+                            "= %.4f m. Prefer setting fine_max_rmse [m] directly.",
+                            legacy, m_pgo_config.reg.fine_max_rmse_m);
+            }
+            else
+            {
+                RCLCPP_WARN(this->get_logger(),
+                            "DEPRECATED config key 'loop_score_tresh' (%.4f) ignored: "
+                            "'fine_max_rmse' = %.4f m is set.",
+                            legacy, m_pgo_config.reg.fine_max_rmse_m);
+            }
+        }
         // D2: loop-closure noise model. Optional keys - fall back to the (documented) defaults
         // in Config so that pre-fix config files still load.
         if (config["loop_noise_xyz"])
@@ -268,10 +331,30 @@ private:
         if (config["loop_robust_k"])
             m_pgo_config.loop_robust_k = config["loop_robust_k"].as<double>();
         RCLCPP_INFO(this->get_logger(),
-                    "LOOP NOISE MODEL: sigma_xyz=%.4f m  sigma_rpy=%.4f rad  huber_k=%.2f  score_thresh=%.3f  search_radius=%.2f m",
+                    "LOOP NOISE MODEL: sigma_xyz=%.4f m  sigma_rpy=%.4f rad  huber_k=%.2f  search_radius=%.2f m",
                     m_pgo_config.loop_noise_xyz, m_pgo_config.loop_noise_rpy,
-                    m_pgo_config.loop_robust_k, m_pgo_config.loop_score_tresh,
-                    m_pgo_config.loop_search_radius);
+                    m_pgo_config.loop_robust_k, m_pgo_config.loop_search_radius);
+        RCLCPP_INFO(this->get_logger(),
+                    "LOOP FRONT END: scan_context=%s radius_search=%s sc(%dx%d, %gm, dist<=%.2f, "
+                    "top%zu, exclude_recent=%d, voxel=%.2fm) coarse(voxel=%.2fm corr<=%.2fm iters=%d "
+                    "rmse<=%.3fm) fine(voxel=%.2fm corr<=%.2fm iters=%d rmse<=%.3fm) "
+                    "gates(overlap>=%.2f @%.2fm, degeneracy=%s eig_ratio>=%.4f) "
+                    "candidates/query<=%d accepted/query<=%d",
+                    m_pgo_config.loop_enable_scan_context ? "on" : "off",
+                    m_pgo_config.loop_enable_radius_search ? "on" : "off",
+                    m_pgo_config.sc.num_ring, m_pgo_config.sc.num_sector,
+                    m_pgo_config.sc.max_radius_m, m_pgo_config.sc.dist_thresh,
+                    static_cast<size_t>(m_pgo_config.sc.num_candidates), m_pgo_config.sc.exclude_recent,
+                    m_pgo_config.sc.downsample_resolution_m,
+                    m_pgo_config.reg.coarse_voxel_resolution_m, m_pgo_config.reg.coarse_max_corr_dist_m,
+                    m_pgo_config.reg.coarse_max_iterations, m_pgo_config.reg.coarse_max_rmse_m,
+                    m_pgo_config.reg.fine_voxel_resolution_m, m_pgo_config.reg.fine_max_corr_dist_m,
+                    m_pgo_config.reg.fine_max_iterations, m_pgo_config.reg.fine_max_rmse_m,
+                    m_pgo_config.gate.min_overlap_ratio, m_pgo_config.gate.overlap_radius_m,
+                    m_pgo_config.gate.degeneracy_gate_enabled ? "on" : "off",
+                    m_pgo_config.gate.min_eig_ratio,
+                    m_pgo_config.max_loop_candidates_per_query,
+                    m_pgo_config.max_accepted_loops_per_query);
     }
     
     // 启动处理线程

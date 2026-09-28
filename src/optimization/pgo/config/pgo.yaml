@@ -5,21 +5,113 @@ local_frame: odom
 
 key_pose_delta_deg: 10
 key_pose_delta_trans: 0.5
-# D3 fix: loop_search_radius is the radius (m) in which keyframe poses are proposed as loop
-# candidates. It must exceed the drift accumulated since the last visit of the same place;
-# it is a drift-dependent SEARCH bound, NOT a precision parameter (it does not affect the
-# pose accuracy of an accepted loop, only which candidates are considered).
-# 1.0 m was below the observed drift of this dataset (raw LIO loop return error 5.804 m over a
-# 134.48 m path, 4.3%), so the genuine global loop was never proposed: only 2 spurious pairs
-# anchored on keyframe 0 were found, both < 1 m apart. With 8.0 m the true global loop
-# kf61 <-> kf359 (2.010 m inconsistency) is detected. Cost of a larger radius is only extra
-# ICP attempts (bounded by loop_score_tresh / min_loop_detect_duration), so 8.0 m is safe.
-loop_search_radius: 8.0
-loop_time_tresh: 60.0
-loop_score_tresh: 0.15
-loop_submap_half_range: 5
-submap_resolution: 0.1
-min_loop_detect_duration: 5.0
+
+# ===========================================================================
+# STEP 1+2 loop-closure front end
+#
+#   Scan Context global descriptor retrieval  ->  coarse registration seeded with
+#   the descriptor's relative yaw (fast_gicp)  ->  fine point-to-plane ICP  ->
+#   multi-gate acceptance (fitness, overlap ratio, eigenvalue degeneracy).
+#
+# Every candidate that reaches the registration stage is logged as one
+# `[PGO][gate]` line carrying the value of every gate, and every detection event
+# as one `[PGO][sc]` line carrying the run totals and the per-stage timings.
+# ===========================================================================
+
+# ---- which detectors propose candidates -----------------------------------------------
+loop_enable_scan_context: true    # Scan Context descriptor retrieval. NOT bounded by
+                                  # loop_search_radius: it must find revisits whose drifted
+                                  # keyframe positions are far apart (that was the D3 failure).
+loop_enable_radius_search: true   # Legacy Euclidean radius search over keyframe positions,
+                                  # kept as a fallback/complement. Its candidates carry no
+                                  # yaw prior - a drifted position has no usable relative yaw -
+                                  # so they enter the cascade with an identity initial guess.
+loop_search_radius: 8.0           # radius-search bound [m]; must exceed the accumulated drift
+                                  # (observed 5.80 m over a 134.15 m path on
+                                  # mid360s_office_loop_01) or real loops are never proposed.
+loop_time_tresh: 60.0             # temporal separation guard [s]: a candidate keyframe must
+                                  # be at least this far from the current one.
+min_loop_detect_duration: 5.0     # rate limit [s] between two detection events; bounds the
+                                  # cost of the cascade (each event runs up to
+                                  # max_loop_candidates_per_query registrations).
+
+max_loop_candidates_per_query: 3  # registrations attempted per detection event, best
+                                  # descriptor distance first.
+max_accepted_loops_per_query: 1   # loop factors added per detection event.
+loop_source_submap_half_range: 0  # source cloud = the current keyframe alone (0) or a local
+                                  # map around it.
+loop_submap_half_range: 5         # target cloud = +-5 keyframes around the candidate
+                                  # (measured in keyframes, each keyframe is ~0.5 m apart).
+submap_resolution: 0.1            # VoxelGrid applied when building the submaps [m].
+
+# ---- Scan Context descriptor ---------------------------------------------------------
+# Geometry defaults are the IROS 2018 paper values used by SC-LIO-SAM / SC-FAST-LIO.
+sc_num_ring: 20                   # radial bins
+sc_num_sector: 60                 # azimuth bins -> the returned yaw is quantised to
+                                  # 360/60 = 6 deg. That is fine: the coarse stage only has
+                                  # to land inside a 3 m correspondence radius (6 deg at a
+                                  # 20 m lever arm is 2.1 m).
+sc_max_radius: 80.0               # points beyond this radius are dropped from the descriptor [m]
+sc_lidar_height: 2.0              # constant added to z before the per-bin max (upstream default;
+                                  # it cancels out of the argmax, so it does not change the
+                                  # descriptor)
+sc_downsample_resolution: 0.2     # VoxelGrid on the keyframe body cloud before describing it [m]
+sc_dist_thresh: 0.30              # maximum Scan Context cosine distance for a candidate.
+                                  # Upstream: 0.1-0.2 is the false-alarm-free range when there is
+                                  # NO downstream ICP check; 0.3-0.6 is what SC-LIO-SAM uses when
+                                  # there IS one. This pipeline has a full registration cascade
+                                  # plus three gates behind it, so the loose 0.30 is used and the
+                                  # gates do the rejecting (a rejected candidate is logged, so the
+                                  # descriptor's own precision is measurable from the log).
+sc_num_candidates: 3              # ringkey nearest neighbours re-ranked per query
+sc_exclude_recent: 30             # never propose one of the last N keyframes (~15 m)
+
+# ---- stage A: coarse registration (fast_gicp), seeded with the descriptor yaw ---------
+coarse_voxel_resolution: 0.5      # [m]
+coarse_max_corr_dist: 3.0         # [m] correspondence radius. Must exceed the residual
+                                  # misalignment left after the descriptor yaw plus the
+                                  # odometry translation prior are applied.
+coarse_max_iterations: 64
+coarse_max_rmse: 0.35             # [m] sqrt() of the PCL fitness score of the coarse stage.
+                                  # PCL's fitness score is a MEAN SQUARED nearest-neighbour
+                                  # distance [m^2], so sqrt() is the RMS residual in metres -
+                                  # that is the interpretable form. The legacy single gate,
+                                  # loop_score_tresh = 0.15, was 0.387 m RMS.
+
+# ---- stage B: fine registration (point-to-plane ICP) ---------------------------------
+fine_voxel_resolution: 0.10       # [m]
+fine_max_corr_dist: 0.50          # [m]
+fine_max_iterations: 60
+fine_max_rmse: 0.10               # [m] same meaning as coarse_max_rmse, applied to the fine
+                                  # stage: RMS nearest-neighbour distance from every source
+                                  # point to the target cloud. 0.10 m is the map's own
+                                  # quantisation floor (submap_resolution / scan_resolution of
+                                  # lio.yaml are 0.10/0.15 m), so demanding better is meaningless.
+fine_normal_search_radius: 0.30   # [m] normal estimation radius used by the point-to-plane
+                                  # stage and by the degeneracy gate; ~100 neighbours per point
+                                  # at fine_voxel_resolution, which is enough for an indoor plane.
+correspondence_randomness: 10     # fast_gicp knn used to estimate the per-point covariances
+
+# ---- acceptance gates ----------------------------------------------------------------
+# A wrong loop with the D2 noise model (sigma 1 cm, stiffer than the accumulated odometry
+# random walk it is meant to remove) actively damages the graph, so every gate is set to
+# reject a doubtful loop rather than admit it.
+overlap_radius: 0.10              # [m] correspondence radius for the overlap ratio
+min_overlap_ratio: 0.35           # minimum fraction of source points that must have a target
+                                  # point within overlap_radius after registration.
+overlap_radius_2: 0.20            # diagnostic only (never gated), logged as a second
+overlap_radius_3: 0.50            # and third overlap number to show the tolerance curve
+degeneracy_gate_enabled: true
+degeneracy_min_eig_ratio: 0.02    # Reject when lambda_min/lambda_max of H = sum_i n_i n_i^T
+                                  # over the accepted correspondences falls below this. H is
+                                  # the information matrix of the point-to-plane residual, so
+                                  # an eigenvalue near zero means the geometry does not
+                                  # constrain that direction at all (a corridor: both walls
+                                  # have normals perpendicular to the corridor axis, so sliding
+                                  # along it is free) and the registration can be arbitrarily
+                                  # wrong inside its own convergence basin. Basis for 0.02:
+                                  # measured on mid360s_office_loop_01 - see
+                                  # /home/lee/t21_wp2/reports/step12_scancontext_gicp.md.
 
 # ===== D2 fix: loop-closure noise model =====
 # Standard deviations (SI units) of the loop-closure BetweenFactor. The old code used
@@ -34,6 +126,10 @@ min_loop_detect_duration: 5.0
 #     variance, N*1e-4 = 3e-2 m^2 in x/y and N*1e-6 = 3e-4 m^2 in z, i.e. far softer than the
 #     loop factor (1e-4 / 2.5e-5). The loop therefore out-votes the accumulated random walk and
 #     actually pulls the graph closed, while one grossly wrong loop cannot wreck it (Huber).
+# NOTE (STEP 1+2): the front end now rejects doubtful loops BEFORE they reach the graph
+# (overlap + degeneracy + fine fitness), so this aggressive variance no longer has to absorb a
+# wrong constraint - it only has to out-vote the drift. The Huber kernel is kept as the second
+# line of defence; see the report for whether it is still needed at the same strength.
 loop_noise_xyz: 0.01
 loop_noise_rpy: 0.005
 # Huber threshold in whitened units (multiples of the loop sigma); residuals above it are
