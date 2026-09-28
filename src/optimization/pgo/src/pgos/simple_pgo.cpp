@@ -1,4 +1,5 @@
 #include "simple_pgo.h"
+#include <cstdio>
 
 SimplePGO::SimplePGO(const Config &config) : m_config(config)
 {
@@ -174,12 +175,36 @@ void SimplePGO::smoothAndUpdate()
     // 添加回环因子
     if (has_loop)
     {
+        // D2 fix. The old code used
+        //   noiseModel::Diagonal::Variances(Vector6::Ones() * pair.score)
+        // where pair.score is the PCL ICP fitness score = mean SQUARED point-to-point
+        // residual [m^2] (<= loop_score_tresh = 0.15). Two problems:
+        //   1) it is not a pose variance: the pose error of an ICP alignment over a whole
+        //      submap is far smaller than the per-point RMS residual, so it over-estimated
+        //      the loop uncertainty by orders of magnitude; and
+        //   2) with the odometry factors at variance 1e-6 the resulting loop factors were
+        //      1e4..1e5x weaker, so gtsam/ISAM2 effectively ignored every loop (measured:
+        //      the trajectory moved by <= 0.0994 m on a 2.01 m loop inconsistency).
+        // New model: a fixed variance floor from config (loop_noise_xyz / loop_noise_rpy)
+        // wrapped in a Huber robust kernel, so a good loop really pulls while a single
+        // grossly wrong ICP loop is down-weighted instead of dragging the whole graph.
+        const double var_xyz = m_config.loop_noise_xyz * m_config.loop_noise_xyz;
+        const double var_rpy = m_config.loop_noise_rpy * m_config.loop_noise_rpy;
+        gtsam::noiseModel::Diagonal::shared_ptr loop_base_noise =
+            gtsam::noiseModel::Diagonal::Variances(
+                (gtsam::Vector(6) << var_rpy, var_rpy, var_rpy, var_xyz, var_xyz, var_xyz).finished());
+        gtsam::noiseModel::Robust::shared_ptr loop_noise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(m_config.loop_robust_k), loop_base_noise);
+
         for (LoopPair &pair : m_cache_pairs)
         {
+            // pair.score is kept as loop-quality metadata (ICP fitness of the accepted pair).
+            printf("[PGO][loop] id %zu <-> %zu  icp_fitness %.6f  var_xyz %.3e var_rpy %.3e huber_k %.2f\n",
+                   pair.source_id, pair.target_id, pair.score, var_xyz, var_rpy, m_config.loop_robust_k);
             m_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(pair.target_id, pair.source_id,
                                                            gtsam::Pose3(gtsam::Rot3(pair.r_offset),
                                                                         gtsam::Point3(pair.t_offset)),
-                                                           gtsam::noiseModel::Diagonal::Variances(gtsam::Vector6::Ones() * pair.score)));
+                                                           loop_noise));
         }
         std::vector<LoopPair>().swap(m_cache_pairs);
     }

@@ -11,3 +11,22 @@ loop_score_tresh: 0.15
 loop_submap_half_range: 5
 submap_resolution: 0.1
 min_loop_detect_duration: 5.0
+
+# ===== D2 fix: loop-closure noise model =====
+# Standard deviations (SI units) of the loop-closure BetweenFactor. The old code used
+# `Variances(Vector6::Ones() * pair.score)` (the raw ICP fitness, <= loop_score_tresh=0.15),
+# i.e. variances up to 0.15 against odometry variances of 1e-6, so every loop factor was
+# 1e4..1e5x weaker than odometry and ISAM2 effectively ignored all of them.
+# Defaults below: sigma_xyz = 1 cm (variance 1e-4) and sigma_rpy = 0.005 rad (variance 2.5e-5).
+# Relative weight vs the odometry BetweenFactor variances (1e-6,1e-6,1e-6,1e-4,1e-4,1e-6):
+#   - vs ONE odometry factor: equal in x/y variance (1e-4 vs 1e-4), 100x weaker in z
+#     (1e-4 vs 1e-6) and 25x weaker in rotation (2.5e-5 vs 1e-6);
+#   - vs the ~N=300 odometry factors that a loop spans: a chain of N factors has N times the
+#     variance, N*1e-4 = 3e-2 m^2 in x/y and N*1e-6 = 3e-4 m^2 in z, i.e. far softer than the
+#     loop factor (1e-4 / 2.5e-5). The loop therefore out-votes the accumulated random walk and
+#     actually pulls the graph closed, while one grossly wrong loop cannot wreck it (Huber).
+loop_noise_xyz: 0.01
+loop_noise_rpy: 0.005
+# Huber threshold in whitened units (multiples of the loop sigma); residuals above it are
+# down-weighted as k/|r|, so gross ICP failures get a small weight instead of a huge error.
+loop_robust_k: 3.0

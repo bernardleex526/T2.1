@@ -259,6 +259,19 @@ private:
         m_pgo_config.loop_submap_half_range = config["loop_submap_half_range"].as<int>();
         m_pgo_config.submap_resolution = config["submap_resolution"].as<double>();
         m_pgo_config.min_loop_detect_duration = config["min_loop_detect_duration"].as<double>();
+        // D2: loop-closure noise model. Optional keys - fall back to the (documented) defaults
+        // in Config so that pre-fix config files still load.
+        if (config["loop_noise_xyz"])
+            m_pgo_config.loop_noise_xyz = config["loop_noise_xyz"].as<double>();
+        if (config["loop_noise_rpy"])
+            m_pgo_config.loop_noise_rpy = config["loop_noise_rpy"].as<double>();
+        if (config["loop_robust_k"])
+            m_pgo_config.loop_robust_k = config["loop_robust_k"].as<double>();
+        RCLCPP_INFO(this->get_logger(),
+                    "LOOP NOISE MODEL: sigma_xyz=%.4f m  sigma_rpy=%.4f rad  huber_k=%.2f  score_thresh=%.3f  search_radius=%.2f m",
+                    m_pgo_config.loop_noise_xyz, m_pgo_config.loop_noise_rpy,
+                    m_pgo_config.loop_robust_k, m_pgo_config.loop_score_tresh,
+                    m_pgo_config.loop_search_radius);
     }
     
     // 启动处理线程

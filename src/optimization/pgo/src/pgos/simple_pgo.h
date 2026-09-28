@@ -11,6 +11,8 @@
 #include <gtsam/slam/PriorFactor.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
+// D2 fix: noiseModel::Robust + mEstimator::Huber (LossFunctions.h is included by NoiseModel.h).
+#include <gtsam/linear/NoiseModel.h>
 
 struct KeyPoseWithCloud
 {
@@ -40,6 +42,20 @@ struct Config
     int loop_submap_half_range = 5;
     double submap_resolution = 0.1;
     double min_loop_detect_duration = 10.0;
+
+    // ===== D2 fix: loop-closure noise model =====
+    // Standard deviations (NOT variances) of the loop BetweenFactor, in SI units:
+    //   loop_noise_xyz [m]   - translation std dev applied to x, y and z
+    //   loop_noise_rpy [rad] - rotation std dev applied to roll, pitch and yaw
+    // These replace the old `Vector6::Ones() * pair.score`, which mapped the ICP fitness
+    // score (a mean-SQUARED point-to-point residual in m^2) directly onto a 6-DoF pose
+    // variance and so was 1e4..1e5x weaker than the 1e-6 odometry variances.
+    double loop_noise_xyz = 0.01;   // 1 cm std dev -> variance 1e-4
+    double loop_noise_rpy = 0.005;  // 0.29 deg std dev -> variance 2.5e-5
+    // Huber threshold expressed in whitened units (multiples of the loop std dev), i.e. a
+    // residual larger than loop_robust_k * sigma is progressively down-weighted
+    // (weight = k / |r|). This is what keeps a single wrong ICP loop from wrecking the graph.
+    double loop_robust_k = 3.0;
 };
 
 class SimplePGO
