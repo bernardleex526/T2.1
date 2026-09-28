@@ -1,0 +1,100 @@
+# ============================================================================
+# lio_highres.yaml - high-precision profile for the T2.1 accuracy target
+#                   (建图精度 <= 5 cm, 定位精度 <= 5 cm)
+# ============================================================================
+# This file is a drop-in alternative to config/lio.yaml. It changes ONLY the two
+# voxel-downsampling parameters; every other key is identical so the two profiles can
+# be swapped without behavioural surprises. The defaults in lio.yaml are NOT changed.
+#
+# Why this file exists: lio.yaml ships scan_resolution 0.15 / map_resolution 0.3 m.
+#   * map_resolution is the ikd-Tree box-filter size (lidar_processor.cpp:7,
+#     set_downsample_param) and the quantization step of the coplanarity test
+#     (lidar_processor.cpp:135-140). A 0.3 m map voxel means map points are quantized to a
+#     0.3 m grid, which alone precludes ANY metre-sub-decimetre map-accuracy claim - the
+#     quantization floor is an order of magnitude above the 5 cm target.
+#   * scan_resolution is the VoxelGrid leaf applied to each incoming scan
+#     (lidar_processor.cpp:16-18) and hence the spacing of the point cloud that is published
+#     as the body cloud and merged into the saved map (pgo saveMaps), so it also bounds the
+#     achievable map resolution.
+# Use this profile when 5 cm-class accuracy is being claimed or measured:
+#   ros2 run fastlio2 lio_node --ros-args -r __ns:=/mapping \
+#     -p config_path:=<install>/share/fastlio2/config/lio_highres.yaml
+# or point the launch file's config_path at it.
+#
+# COST TRADEOFF (measure it, do not assume it):
+#   * Map size scales roughly with the inverse square of map_resolution for a surface-like
+#     environment. Going 0.3 m -> 0.05 m is a 6x finer grid, i.e. ~36x more map points:
+#     the office bag produced 1,534,804 points at the default profile, so expect tens of
+#     millions of points and a proportional ikd-Tree + RSS increase on the order of a few GB.
+#     [INFERENCE from the scaling, not measured here]
+#   * Per-scan residual/Jacobian cost grows with the number of effective points, and the
+#     plane fit also has more neighbours to search, so per-scan latency increases; the
+#     >= 0.5 m/s mapping-speed requirement must be re-measured with this profile.
+#   * If the machine cannot keep RTF ~ 1.0, use the middle ground scan_resolution 0.1 /
+#     map_resolution 0.1 first: it is already 3x finer than the shipped profile.
+# ----------------------------------------------------------------------------
+
+# --- identical to lio.yaml below this line except the two voxel parameters ---
+imu_topic: /livox/imu
+lidar_topic: /livox/lidar
+body_frame: body
+world_frame: odom
+print_time_cost: false
+
+lidar_filter_num: 3
+lidar_min_range: 0.5
+lidar_max_range: 30.0
+# High-precision voxels. Target 5 cm -> 5 cm grid (see the header for the memory/CPU cost).
+# scan_resolution 0.05 keeps the raw MID360 point density that the 5 cm claim needs;
+# map_resolution 0.05 keeps the ikd-Tree map from quantizing points to a coarser grid.
+scan_resolution: 0.05
+map_resolution: 0.05
+
+cube_len: 1000
+det_range: 40
+move_thresh: 1.5
+
+na: 0.1
+ng: 0.1
+nba: 0.0001
+nbg: 0.0001
+
+imu_init_num: 20
+near_search_num: 5
+ieskf_max_iter: 5
+
+gravity_align: true
+esti_il: false
+
+# 雷达/IMU 适配（迁移到其他机器人时修改这里）
+# lidar_type: "livox" 表示订阅 livox CustomMsg；"pointcloud2" 表示订阅通用 PointCloud2(Velodyne/Ouster/RoboSense 等)
+lidar_type: livox
+lidar_max_line: 4            # Livox 扫描线数(MID360=4)；非 Livox 或 CustomMsg 模式可忽略
+imu_acc_scale: 10.0          # MID360 内置 IMU 设 10.0(其输出约为 g，×10≈m/s²)；标准 IMU 输出 m/s² 时设 1.0
+# pointcloud2 模式下每点时间字段(为空则不做扫描内运动补偿)。Velodyne 用 "time"(scale=1.0)；Ouster 用 "t"(scale=1e-9，绝对时间，需改相对)
+pcl2_time_field: ""
+pcl2_time_scale: 1.0
+
+point_quality_thresh: 0.1    # 与上游 FAST-LIO2 一致，过大会在结构稀疏处造成无有效点
+
+ext_il: [-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0, 1.0] # x y z qx qy qz qw
+ext_lc:
+  [
+    0.055301417087128005,
+    -0.023940681099107203,
+    -0.036510243108364156,
+    0.5040772962309031,
+    -0.5018066026651014,
+    0.49854633904149553,
+    -0.4955277598425481,
+  ] # x y z qx qy qz qw
+
+cam_width: 1280
+cam_height: 720
+cam_fx: 641.976318359375
+cam_fy: 641.0658569335938
+cam_cx: 641.5721435546875
+cam_cy: 368.21832275390625
+cam_d: [-0.05588280409574509, 0.06619580090045929, 0.0002959131670650095, 0.0008284428040497005, -0.021595485508441925]
+
+lidar_cov_inv: 1000.0
