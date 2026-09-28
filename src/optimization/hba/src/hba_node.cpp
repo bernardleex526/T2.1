@@ -110,6 +110,14 @@ public:
         std::string file_name;
         Pose pose;
         pcl::PCDReader reader;
+
+        // Start from a clean optimiser: without this a second /hba/refine_map call
+        // appends the new keyframes to the previous map's poses/clouds, which both
+        // corrupts the optimisation (stale planes) and breaks the positional match
+        // between optimized_poses.txt and poses.txt that the map rebuilder relies on.
+        m_hba = std::make_shared<HBA>(m_hba_config);
+        m_do_optimize = false;
+
         while (std::getline(ifs, line))
         {
 
