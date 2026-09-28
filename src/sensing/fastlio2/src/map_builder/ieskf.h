@@ -93,6 +93,10 @@ public:
 
 private:
     size_t m_max_iter = 10;
+    // audit counters for the graceful-degradation path in update()
+    size_t m_update_calls = 0;
+    size_t m_reject_total = 0;
+    size_t m_reject_reported = 0;
     State m_x;
     M21D m_P;
     loss_func m_loss_func;

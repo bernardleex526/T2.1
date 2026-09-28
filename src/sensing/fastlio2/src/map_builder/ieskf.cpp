@@ -1,4 +1,5 @@
 #include "ieskf.h"
+#include <iostream>
 
 double State::gravity = 9.81;
 //新增约束参数
@@ -108,9 +109,15 @@ void IESKF::update()
     shared_data.iter_num = 0;
     shared_data.res = 1e10;
     V21D delta = V21D::Zero();
-    M21D H = M21D::Identity();
+    M21D H = M21D::Zero();
     V21D b;
     Eigen::LDLT<M21D> H_ldlt;
+    // A scan is only allowed to shape the state and the covariance if at least one
+    // iteration ended on a usable linear solve; otherwise the propagated state and
+    // covariance are kept (a scan with no usable observation is not a measurement).
+    bool have_update = false;
+    bool last_usable = false;
+    ++m_update_calls;
 
     for (size_t i = 0; i < m_max_iter; i++)
     {
@@ -140,10 +147,22 @@ void IESKF::update()
         b.block<12, 1>(0, 0) += shared_data.b;
 
         H_ldlt.compute(H);
-        delta = H_ldlt.solve(-b);
+        const V21D delta_step = H_ldlt.solve(-b);
+        if (P_ldlt.info() != Eigen::Success || H_ldlt.info() != Eigen::Success ||
+            !H.allFinite() || !delta_step.allFinite())
+        {
+            // Degrade, do not crash: a non-finite/inf step would be composed into
+            // r_wi/r_il and the next Sophus::SO3d construction would abort the node.
+            ++m_reject_total;
+            last_usable = false;
+            break;
+        }
+        delta = delta_step;
 
         m_x += delta;
         shared_data.iter_num += 1;
+        have_update = true;
+        last_usable = true;
 
         // ==================== 诊断代码开始 ====================
         double position_change = delta.segment<3>(3).norm();
@@ -177,11 +196,26 @@ void IESKF::update()
     m_x.applyConstraints();
     // RCLCPP_DEBUG(rclcpp::get_logger("kf_debug"), "IESKF更新完成，约束已应用");
 
+    if (have_update && last_usable)
+    {
+        M21D L = M21D::Identity();
+        // L.block<3, 3>(0, 0) = JrInv(delta.segment<3>(0));
+        // L.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
+        L.block<3, 3>(0, 0) = Jr(delta.segment<3>(0));
+        L.block<3, 3>(6, 6) = Jr(delta.segment<3>(6));
+        // H_ldlt still holds the last accepted iteration's H; solve for the identity
+        // rather than forming an explicit inverse. P_new = L * H^-1 * L^T is the
+        // standard iterated-EKF result for this information-form update.
+        m_P = L * H_ldlt.solve(M21D::Identity()) * L.transpose();
+    }
+    // else: no usable observation this scan -> keep the propagated covariance
+    // (the previous code built m_P from H's initialiser in that case, resetting P to
+    //  L*I*L^T, and would now build it from a zero matrix).
 
-    M21D L = M21D::Identity();
-    // L.block<3, 3>(0, 0) = JrInv(delta.segment<3>(0));
-    // L.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
-    L.block<3, 3>(0, 0) = Jr(delta.segment<3>(0));
-    L.block<3, 3>(6, 6) = Jr(delta.segment<3>(6));
-    m_P = L * H.inverse() * L.transpose();
+    if (m_reject_total != m_reject_reported || (m_update_calls % 1000) == 0)
+    {
+        m_reject_reported = m_reject_total;
+        std::cerr << "[ieskf] updates=" << m_update_calls << " rejected=" << m_reject_total
+                  << " (total over this process)" << std::endl;
+    }
 }
