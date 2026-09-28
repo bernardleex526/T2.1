@@ -110,6 +110,7 @@ void IESKF::update()
     V21D delta = V21D::Zero();
     M21D H = M21D::Identity();
     V21D b;
+    Eigen::LDLT<M21D> H_ldlt;
 
     for (size_t i = 0; i < m_max_iter; i++)
     {
@@ -129,13 +130,17 @@ void IESKF::update()
         M21D J = M21D::Identity();
         J.block<3, 3>(0, 0) = JrInv(delta.segment<3>(0));
         J.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
-        H += J.transpose() * m_P.inverse() * J;
-        b += J.transpose() * m_P.inverse() * delta;
+        // m_P is symmetric: factorise it once and solve for both right-hand sides
+        // instead of forming the explicit 21x21 inverse twice per iteration.
+        Eigen::LDLT<M21D> P_ldlt(m_P);
+        H.noalias() = J.transpose() * P_ldlt.solve(J);
+        b.noalias() = J.transpose() * P_ldlt.solve(delta);
 
         H.block<12, 12>(0, 0) += shared_data.H;
         b.block<12, 1>(0, 0) += shared_data.b;
 
-        delta = -H.inverse() * b;
+        H_ldlt.compute(H);
+        delta = H_ldlt.solve(-b);
 
         m_x += delta;
         shared_data.iter_num += 1;
