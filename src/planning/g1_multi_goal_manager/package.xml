@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>g1_multi_goal_manager</name>
+  <version>0.0.1</version>
+  <description>The g1_multi_goal_manager package for ROS 2</description>
+  <maintainer email="fk@todo.todo">fk</maintainer>
+  <license>TODO</license>
+
+  <!-- 构建工具依赖 -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  
+  <!-- 编译和运行依赖 -->
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>  <!-- 新增：消息运行时依赖 -->
+  
+  <!-- 其他依赖 -->
+  <exec_depend>ament_index_python</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

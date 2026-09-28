@@ -1,0 +1,5 @@
+int32 index     # 第几个航点（从1开始）
+string new_name # 新名称
+---
+bool success
+string message

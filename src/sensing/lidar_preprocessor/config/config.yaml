@@ -1,0 +1,32 @@
+# point_cloud_to_cmd_vel 参数配置文件
+# 用于配置基于点云聚类的全向势场避障节点
+
+preprocessor:
+  ros__parameters:
+    # 输入输出话题
+    input_cloud_topic: "/mapping/body_cloud"          # 输入原始点云话题
+    output_cloud_topic: "/preprocessed_cloud"         # 预处理后点云发布话题（用于调试）
+    obstacle_cloud_topic: "/obstacle_cloud"           # 障碍物聚类点云发布话题
+    cmd_vel_topic: "/cmd_vel_obstacle"                    # 输出速度指令话题
+
+    # 点云预处理参数
+    min_dist: 0.2                                      # 有效点云的最小距离（米，忽略过近点）
+    max_dist: 1.0                                      # 有效点云的最大距离（米，忽略远处点）
+    stat_k: 10                                         # 统计滤波邻域点数
+    std_dev_mult: 2.0                                  # 统计滤波标准差倍数
+    use_voxel_filter: false                            # 是否启用体素滤波（降采样）
+    voxel_leaf_size: 0.05                              # 体素滤波叶子尺寸（米）
+
+    # 欧几里得聚类参数
+    cluster_tolerance: 0.08                             # 聚类容忍距离（米）
+    min_cluster_size: 30                                # 最小聚类点数
+    max_cluster_size: 1500                              # 最大聚类点数
+
+    # 势场避障参数
+    safety_distance: 0.7                                # 触发避障的安全距离（米）
+    linear_gain: 1.0                                    # 斥力对线速度的增益
+    max_linear_speed: 0.3                               # 最大线速度（米/秒）
+    min_drive_threshold: 0.2                             # 最小驱动速度阈值（米/秒，低于此值会被提升至此值）
+
+    # 日志控制
+    log_throttle_sec: 1.0                               # 日志打印间隔（秒）

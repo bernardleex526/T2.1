@@ -1,0 +1,335 @@
+amcl: 
+  ros__parameters: 
+    use_sim_time: false  
+    enabled: false       
+
+# 行为树导航器配置（控制导航逻辑流程）
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false  
+    global_frame: map    
+    robot_base_frame: base_link  
+    odom_topic: /mapping/lio_odom    
+    bt_loop_duration: 10             
+    default_server_timeout: 20       
+    plugin_lib_names:
+     - nav2_compute_path_to_pose_action_bt_node                 
+     - nav2_compute_path_through_poses_action_bt_node           
+     - nav2_smooth_path_action_bt_node                         
+     - nav2_follow_path_action_bt_node                         
+     - nav2_spin_action_bt_node                                
+     - nav2_wait_action_bt_node                                
+     - nav2_back_up_action_bt_node                             
+     - nav2_drive_on_heading_bt_node                           
+     - nav2_clear_costmap_service_bt_node                      
+     - nav2_is_stuck_condition_bt_node                         
+     - nav2_goal_reached_condition_bt_node                     
+     - nav2_goal_updated_condition_bt_node                     
+     - nav2_globally_updated_goal_condition_bt_node            
+     - nav2_is_path_valid_condition_bt_node                    
+     - nav2_initial_pose_received_condition_bt_node            
+     - nav2_reinitialize_global_localization_service_bt_node    
+     - nav2_rate_controller_bt_node                            
+     - nav2_distance_controller_bt_node                        
+     - nav2_speed_controller_bt_node                           
+     - nav2_truncate_path_action_bt_node                       
+     - nav2_truncate_path_local_action_bt_node                 
+     - nav2_goal_updater_node_bt_node                          
+     - nav2_recovery_node_bt_node                              
+     - nav2_pipeline_sequence_bt_node                          
+     - nav2_round_robin_node_bt_node                           
+     - nav2_transform_available_condition_bt_node              
+     - nav2_time_expired_condition_bt_node                     
+     - nav2_path_expiring_timer_condition                      
+     - nav2_distance_traveled_condition_bt_node                
+     - nav2_single_trigger_bt_node                             
+     - nav2_is_battery_low_condition_bt_node                   
+     - nav2_navigate_through_poses_action_bt_node              
+     - nav2_navigate_to_pose_action_bt_node                    
+     - nav2_remove_passed_goals_action_bt_node                 
+     - nav2_planner_selector_bt_node                           
+     - nav2_controller_selector_bt_node                        
+     - nav2_goal_checker_selector_bt_node                      
+     - nav2_controller_cancel_bt_node                          
+     - nav2_path_longer_on_approach_bt_node                    
+     - nav2_wait_cancel_bt_node                                
+     - nav2_spin_cancel_bt_node                                
+     - nav2_back_up_cancel_bt_node                             
+     - nav2_drive_on_heading_cancel_bt_node                    
+
+# 行为树导航器节点配置
+bt_navigator_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false 
+
+# 控制器服务器配置（核心修改：替换为MPPI）
+controller_server:
+  ros__parameters:
+    use_sim_time: false  
+    controller_frequency: 20.0                             # 保持与原配置一致的频率（匹配双足步态控制）
+    odom_topic: /mapping/lio_odom                          # 保持激光里程计话题不变
+    min_x_velocity_threshold: 0.001                        # 保持原阈值
+    min_y_velocity_threshold: 0.5                          # 保持原阈值（双足Y方向几乎无运动）
+    min_theta_velocity_threshold: 0.001                    # 保持原阈值
+    failure_tolerance: 0.3                                 # 保持原容忍度
+    progress_checker_plugin: "progress_checker"            
+    goal_checker_plugins: ["general_goal_checker"]         
+    controller_plugins: ["FollowPath"]                     # 插件名称保持不变，仅替换内部实现
+
+    # 进度检查器参数（保持不变）
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"     
+      required_movement_radius: 0.5                       
+      movement_time_allowance: 10.0                       
+
+    # 目标检查器参数（保持不变）
+    general_goal_checker:
+      stateful: True                                       
+      plugin: "nav2_controller::SimpleGoalChecker"         
+      xy_goal_tolerance: 0.20                              
+      yaw_goal_tolerance: 0.2                              
+
+    # ========== 核心修改：替换DWB为MPPI ==========
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"       # MPPI插件类名（Humble版本适配）
+      debug_trajectory_details: True                       # 保留调试功能，方便排查狭窄通道问题
+      # 基础运动参数（适配双足机器人低速、平滑的特点）
+      max_velocity: [0.5, 0.0, 0.8]                        # [x, y, theta] 双足最大速度（降低x速度，避免步态失衡）
+      min_velocity: [-0.2, 0.0, -0.8]                      # 允许小范围后退（解决狭窄通道卡壳）
+      max_acceleration: [0.8, 0.0, 0.6]                    # 双足加速度限制（降低，保证步态平滑）
+      max_deceleration: [-0.8, 0.0, -0.6]                  # 双足减速度限制
+      # MPPI核心预测参数（狭窄通道优化）
+      prediction_horizon: 1.2                              # 预测1.2秒未来轨迹（提前规划狭窄通道转向）
+      n_samples: 800                                       # 采样轨迹数（平衡算力与路径质量）
+      gamma: 0.95                                          # 采样权重衰减系数（增强最优轨迹权重）
+      # 代价函数权重（狭窄通道+双足优化）
+      obstacle_weight: 15.0                                # 避障权重（降低，避免过度绕行狭窄通道）
+      path_weight: 30.0                                    # 路径跟踪权重（提高，贴合全局路径）
+      goal_weight: 25.0                                    # 目标跟踪权重
+      orientation_weight: 20.0                             # 朝向权重（适配双足转向步态）
+      smoothness_weight: 100.0                             # 平滑性权重（重点！提高以保证双足步态稳定）
+      # 其他关键参数
+      transform_tolerance: 1.0                             # 保持与原配置一致
+      xy_goal_tolerance: 0.15                              # 保持原目标容忍度
+      yaw_goal_tolerance: 0.2                              # 保持原朝向容忍度
+      reset_period: 1.0                                    # 轨迹重置周期（避免局部最小值）
+      # 双足适配：禁用不需要的维度（Y方向）
+      enable_y_velocity: false                             # 双足无Y方向运动，禁用以减少计算
+      # 狭窄通道优化：允许小范围后退
+      allow_reversing: true                                # 开启后退功能（解决DWB卡壳问题）
+      reversing_weight: 5.0                                # 后退代价权重（适度，鼓励必要时后退）
+
+# 控制器服务器节点配置
+controller_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false  
+
+# 局部代价图配置（保持不变）
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 10.0                               
+      publish_frequency: 10.0                               
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: false
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      robot_radius: 0.35
+      plugins: ["spatio_temporal_voxel_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 8.0
+        inflation_radius: 0.80
+      spatio_temporal_voxel_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
+        enabled: true
+        publish_voxel_map: True                              
+        voxel_decay: 0.3                                     
+        decay_model: 0                                       
+        voxel_size: 0.05                                     
+        origin_z: 0.0
+        max_obstacle_height: 1.0
+        min_obstacle_height: 0.0
+        track_unknown_space: true                            
+        unknown_threshold: 15                                
+        mark_threshold: 0                                    
+        update_footprint_enabled: true                       
+        combination_method: 1                                
+        transform_tolerance: 0.2                             
+        mapping_mode: false                                  
+        observation_sources: pointcloud
+        pointcloud:
+          topic: /mapping/body_cloud            
+          data_type: "PointCloud2"
+          marking: true
+          clearing: true
+          obstacle_range: 5.0                                
+          expected_update_rate: 0.0                          
+          observation_persistence: 0.0                       
+          clear_after_reading: true                          
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"  
+        map_subscribe_transient_local: True
+      always_send_full_costmap: True
+  local_costmap_client:
+    ros__parameters:
+      use_sim_time: false
+  local_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: false
+
+# 全局代价图配置（保持不变）
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 10.0                               
+      publish_frequency: 10.0                              
+      global_frame: map                                   
+      robot_base_frame: base_link                         
+      use_sim_time: false                                 
+      robot_radius: 0.35                                  
+      resolution: 0.05                                    
+      track_unknown_space: true                           
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]       
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: pointcloud
+        pointcloud:
+          topic: /mapping/body_cloud
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "PointCloud2"
+          raytrace_max_range: 5.0
+          raytrace_min_range: 0.5
+          obstacle_max_range: 5.0
+          obstacle_min_range: 0.5
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"            
+        map_subscribe_transient_local: True               
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 8.0
+        inflation_radius: 1.0
+      always_send_full_costmap: True                      
+  global_costmap_client:
+    ros__parameters:
+      use_sim_time: false                                 
+  global_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: false                                 
+
+
+# 地图服务器配置（保持不变）
+map_server:
+  ros__parameters:
+    use_sim_time: false  
+    yaml_filename: "turtlebot3_world.yaml"  
+
+# 地图保存器配置（保持不变）
+map_saver:
+  ros__parameters:
+    use_sim_time: false       
+    save_map_timeout: 5.0                                 
+    free_thresh_default: 0.25                             
+    occupied_thresh_default: 0.65                         
+    map_subscribe_transient_local: True                   
+
+# 规划器服务器配置（保持不变）
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    planner_plugins: ["GridBased"]
+    use_sim_time: false
+    use_odometry: true
+    odom_topic: /mapping/lio_odom
+
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      tolerance: 0.5                      
+      downsample_costmap: false            
+      downsampling_factor: 1               
+      allow_unknown: false          
+      max_iterations: 1000000               
+      max_on_approach_iterations: 1000      
+      max_planning_time: 2.0               
+      motion_model_for_search: "MOORE"      
+      cost_travel_multiplier: 10.0          
+      use_final_approach_orientation: false 
+
+# 规划器服务器节点配置（保持不变）
+planner_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false  
+
+# 路径平滑器服务器配置（保持不变）
+smoother_server:
+  ros__parameters:
+    use_sim_time: false                   
+    smoother_plugins: ["simple_smoother"]                 
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"             
+      tolerance: 1.0e-10                                  
+      max_its: 1000                                       
+      do_refinement: True                                  
+
+# 行为服务器配置（保持不变）
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw              
+    footprint_topic: local_costmap/published_footprint    
+    cycle_frequency: 10.0                                 
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]  
+    spin:
+      plugin: "nav2_behaviors/Spin"                       
+    backup:
+      plugin: "nav2_behaviors/BackUp"                     
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"             
+    wait:
+      plugin: "nav2_behaviors/Wait"                       
+    global_frame: odom  
+    robot_base_frame: base_link  
+    transform_tolerance: 0.1                              
+    use_sim_time: false                                   
+    simulate_ahead_time: 2.0                              
+    max_rotational_vel: 1.2                               
+    min_rotational_vel: 0.4                               
+    rotational_acc_lim: 1.2                               
+
+# 机器人状态发布器配置（保持不变）
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: false  
+
+# 航点跟随器配置（保持不变）
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: false
+    loop_rate: 20                                         
+    stop_on_failure: false                                
+    waypoint_task_executor_plugin: "wait_at_waypoint"     
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"    
+      enabled: True                                       
+      waypoint_pause_duration: 200                        
+
+# 速度平滑器配置（保持不变，注意use_sim_time与整体一致，建议改为false）
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false  # 修正为false，与整体配置一致
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [1.5, 0.0, 1.0]  
+    min_velocity: [-1.5, 0.0, -1.0]
+    max_accel: [2.5, 0.0, 3.2]
+    max_decel: [-2.5, 0.0, -3.2]
+    odom_topic: "mapping/lio_odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
