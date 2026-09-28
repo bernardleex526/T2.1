@@ -55,6 +55,7 @@ ament_target_dependencies(hba_node rclcpp std_msgs sensor_msgs interface pcl_con
 target_link_libraries(hba_node ${PCL_LIBRARIES} gtsam yaml-cpp)
 
 install(TARGETS hba_node DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/rebuild_map_from_poses.py DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})

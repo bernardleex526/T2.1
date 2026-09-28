@@ -190,15 +190,31 @@ ros2 service call /mapping/save_colored_pcd interface/srv/SaveColoredPcd "{save_
 
 ### 调用优化服务（一致性地图优化）
 ```bash
-# 启动一致性优化节点
+# 启动一致性优化节点（rviz2 默认关闭，需要可视化时加 use_rviz:=true）
 ros2 launch hba hba_launch.py
+# 等价的无 launch 方式（config_path 可指向自定义 hba.yaml）
+ros2 run hba hba_node --ros-args -r __ns:=/hba -p config_path:=<install>/share/hba/config/hba.yaml
 
-# 离线调用
-ros2 service call /hba/refine_map interface/srv/RefineMap "{"maps_path": '$HOME/flyos-universe-ros2/data/<map_name>'}"
+# maps_path 必须是由 /pgo/save_maps(save_patches: true) 产生的目录，
+# 且同时包含 poses.txt 与 patches/：
+#   - poses.txt  每行 "<patch 文件名> tx ty tz qw qx qy qz"
+#   - patches/*.pcd  对应的 body 系关键帧点云
+ros2 service call /hba/refine_map interface/srv/RefineMap "{maps_path: '$HOME/flyos-universe-ros2/data/<map_name>'}"
 
 # 保存优化后的位姿(HBA 写入的是位姿而非点云地图)
 ros2 service call /hba/save_poses interface/srv/SavePoses "{file_path: '$HOME/flyos-universe-ros2/data/<map_name>/optimized_poses.txt'}"
 ```
+
+注意事项（2026-09 实测）：
+* `refine_map` 只负责**载入**地图并置位一个标志，真正的 HBA 迭代在与服务回调不同的
+  100 ms 定时器里跑（`hba_iter` 次），期间持有服务互斥锁。所以服务返回 `success=True`
+  只代表“已载入”，**不代表优化结束**：必须等节点日志出现 `END OPTIMIZE` 再调用
+  `save_poses`，否则写出的还是未优化的原始位姿。
+* `optimized_poses.txt` 每行 7 个数 `tx ty tz qw qx qy qz`，顺序与 `poses.txt` 一一对应；
+  重建优化后的地图要用 `patches/` + 这两个位姿文件按行配对，包内已带该工具：
+  `ros2 run hba rebuild_map_from_poses.py --map-dir <map_name> --poses <map_name>/optimized_poses.txt --out <map_name>/refined_map.pcd`
+* HBA 只改位姿、不改点云分辨率：它能减小局部面片重影（map thickness），不能提高地图分辨率，
+  也不会闭合全局回环（窗口是连续窗口，`window_size`/`stride` 决定）。
 
 ### 重定位
 
