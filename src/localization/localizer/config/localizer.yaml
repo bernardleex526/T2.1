@@ -4,6 +4,14 @@ map_frame: map
 local_frame: odom
 update_hz: 1.0
 
+# Path of the prior PCD map the localizer relocalizes against.
+# Resolution order: the -p pcd_path:=<file> launch/CLI parameter wins; otherwise this key.
+# Leaving both empty is a configuration error: localizer_node now logs a FATAL message
+# explaining how to set it and exits(1), instead of dying with a YAML::TypedBadConversion
+# (the key used to be absent from this file entirely).
+# Example: pcd_path: "/home/lee/t21_wp2/reports/maps/map.pcd"
+pcd_path: ""
+
 rough_scan_resolution: 0.25
 rough_map_resolution: 0.25
 rough_max_iteration: 5

@@ -1,6 +1,7 @@
 #include <queue>
 #include <mutex>
 #include <filesystem>
+#include <stdexcept>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -112,7 +113,10 @@ public:
         // 如果命令行没有提供，则使用YAML中的配置
         if (m_config.pcd_path.empty())
         {
-            m_config.pcd_path = config["pcd_path"].as<std::string>();
+            // The key used to be absent from localizer.yaml entirely, so this line threw
+            // yaml-cpp YAML::TypedBadConversion and the node aborted with an opaque message.
+            if (config["pcd_path"])
+                m_config.pcd_path = config["pcd_path"].as<std::string>();
         }
 
         m_localizer_config.rough_scan_resolution = config["rough_scan_resolution"].as<double>();
@@ -126,6 +130,27 @@ public:
         m_localizer_config.refine_score_thresh = config["refine_score_thresh"].as<double>();
 
         RCLCPP_INFO(this->get_logger(), "Using PCD path: %s", m_config.pcd_path.c_str());
+
+        // Fail fast and human-readably when no prior map was configured. Without a map the
+        // localizer cannot relocalize anything, and the previous behaviour was an opaque
+        // yaml-cpp YAML::TypedBadConversion backtrace.
+        if (m_config.pcd_path.empty())
+        {
+            throw std::runtime_error(
+                "localizer_node: no prior PCD map configured. Set the 'pcd_path' key in the "
+                "config file passed via -p config_path:=<file> (see localizer/config/localizer.yaml, "
+                "where it defaults to an empty string) or pass it on the command line, e.g. "
+                "'ros2 run localizer localizer_node --ros-args -p config_path:=<file> -p pcd_path:=/path/to/map.pcd'. "
+                "The 'relocalize' service can also carry a path per request, but one of the two "
+                "config sources must be set at startup.");
+        }
+
+        if (!std::filesystem::exists(m_config.pcd_path))
+        {
+            RCLCPP_WARN(this->get_logger(),
+                        "configured PCD map does not exist yet: %s (relocalization will fail until it does)",
+                        m_config.pcd_path.c_str());
+        }
     }
 
     // 处理RViz发布的初始位姿
@@ -361,7 +386,18 @@ private:
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<LocalizerNode>());
+    try
+    {
+        rclcpp::spin(std::make_shared<LocalizerNode>());
+    }
+    catch (const std::exception &e)
+    {
+        // e.g. a missing/unset pcd_path: report it as a plain human-readable error instead of
+        // an uncaught-exception backtrace from yaml-cpp.
+        RCLCPP_FATAL(rclcpp::get_logger("localizer_node"), "%s", e.what());
+        rclcpp::shutdown();
+        return 1;
+    }
     rclcpp::shutdown();
     return 0;
 }
