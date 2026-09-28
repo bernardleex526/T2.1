@@ -37,19 +37,27 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(interface REQUIRED)
 find_package(yaml-cpp REQUIRED)
+# Vendored Scan Context descriptor (see src/scan_context/Scancontext.h for provenance).
+#   cv_bridge / OpenCV : only needed because the vendored Scan Context header includes them;
+#                        no OpenCV or cv_bridge symbol is called, so they are include-only.
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
 
 
 
 include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 set(SRC_LIST src/pgos/commons.cpp
-             src/pgos/simple_pgo.cpp)
+             src/pgos/simple_pgo.cpp
+             src/scan_context/Scancontext.cpp)
 
 add_executable(pgo_node src/pgo_node.cpp ${SRC_LIST})
-ament_target_dependencies(pgo_node rclcpp std_msgs sensor_msgs nav_msgs message_filters pcl_conversions tf2_ros geometry_msgs visualization_msgs interface GTSAM)
+ament_target_dependencies(pgo_node rclcpp std_msgs sensor_msgs nav_msgs message_filters pcl_conversions tf2_ros geometry_msgs visualization_msgs interface GTSAM cv_bridge)
 target_link_libraries(pgo_node ${PCL_LIBRARIES} gtsam yaml-cpp)
 
 
@@ -60,6 +68,17 @@ install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})
 
 
 if(BUILD_TESTING)
+  # Pins the Scan Context yaw sign convention against a synthetic room with a known
+  # ground-truth relative yaw -- the single most subtle assumption of the new front end
+  # (see src/pgos/simple_pgo.cpp, "initial guess").
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_scan_context_yaw test/test_scan_context_yaw.cpp
+                  src/scan_context/Scancontext.cpp)
+  target_include_directories(test_scan_context_yaw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                           ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(test_scan_context_yaw cv_bridge pcl_conversions sensor_msgs)
+  target_link_libraries(test_scan_context_yaw ${PCL_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

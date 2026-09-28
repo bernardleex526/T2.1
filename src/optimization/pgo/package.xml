@@ -20,6 +20,10 @@
   <depend>visualization_msgs</depend>
   <depend>interface</depend>
   <depend>GTSAM</depend>
+  <!-- Vendored Scan Context descriptor -->
+  <depend>cv_bridge</depend>
+  <depend>libopencv-dev</depend>
+  <depend>nanoflann</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
