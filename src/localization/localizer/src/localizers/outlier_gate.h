@@ -28,6 +28,12 @@
 //     and the node invalid until an operator relocalized it (review NB1).  The class owns the
 //     whole lifecycle (engaged / valid / awaiting recovery) because all of it is decided by
 //     the same accept-reject sequence; the node only maps it onto relocalize_check.
+//  4. A candidate this gate REJECTED is never published.  The reference used for tracking can
+//     be re-seeded on such a candidate (otherwise the tracker could never recover), but the
+//     published map<-odom output is an unframed transform - consumers may ignore
+//     relocalize_check - so it stays at the last trusted value while the lock is degraded and
+//     is released (snapped, not blended) only when the lock is valid again.  Callers that must
+//     follow the tracker (e.g. to seed the next ICP) use reference_*(), not published_*().
 //
 // Time-discrete by construction: dt is the time between ICP updates, and the thresholds are
 // per-update innovation bounds (they do not scale with dt because the odometry is the
@@ -45,9 +51,10 @@ struct OffsetGateConfig
     double max_angle_rad = 0.03;       // body-orientation innovation allowed per update
     int max_consecutive_rejects = 10;  // then: report lost and re-seed the reference
     // After a re-seed the gate stays ENGAGED (it keeps rejecting implausible candidates) and
-    // needs this many consecutive accepted updates before it reports the lock as recovered.
-    // The caller maps lost -> invalid and recovered -> valid again; without the recovery edge
-    // the node would stay invalid forever while the gate is bypassed (review NB1).
+    // needs this many consecutive accepted updates before it reports the lock as recovered and
+    // releases the published transform again.  The caller maps lost -> invalid and
+    // recovered -> valid; without the recovery edge the node would stay invalid forever while
+    // the gate is bypassed (review NB1).
     int recovery_accepts = 10;
     double ema_alpha = 0.10;           // smoothing of the PUBLISHED offset only
 };
@@ -69,16 +76,15 @@ public:
     OffsetOutlierGate() = default;
     explicit OffsetOutlierGate(const OffsetGateConfig &cfg) : m_cfg(cfg) {}
 
-    // Adopt the candidate unconditionally as the reference (first lock, or an operator
-    // relocalize).  Does NOT make the lock valid by itself: only a service_request update or a
-    // completed recovery does.
+    // Adopt the candidate unconditionally as reference AND published transform (first lock, or
+    // an operator relocalize).  Does NOT make the lock valid by itself: only a service_request
+    // update or a completed recovery does.
     void reset(const M3D &r, const V3D &t)
     {
         m_engaged = true;
         m_raw_r = r;
         m_raw_t = t;
-        m_ema_r = r;
-        m_ema_t = t;
+        setPublished(r, t, true);
         m_awaiting_recovery = false;
         m_accepts = 0;
         m_rejects = 0;
@@ -97,6 +103,11 @@ public:
     bool engaged() const { return m_engaged; }
     bool valid() const { return m_valid; }
     bool awaitingRecovery() const { return m_awaiting_recovery; }
+    // The tracking reference: the last ACCEPTED ICP offset (or the re-seeded one while the lock
+    // is degraded).  This is what the next ICP should be seeded with - it is deliberately NOT
+    // the published (EMA-smoothed, possibly frozen) value.
+    const M3D &reference_r() const { return m_raw_r; }
+    const V3D &reference_t() const { return m_raw_t; }
     const M3D &published_r() const { return m_ema_r; }
     const V3D &published_t() const { return m_ema_t; }
     int consecutiveRejects() const { return m_rejects; }
@@ -136,18 +147,28 @@ public:
         {
             m_raw_r = cand_r;
             m_raw_t = cand_t;
-            const double a = m_cfg.ema_alpha;
-            m_ema_t = (1.0 - a) * m_ema_t + a * cand_t;
-            m_ema_r = Eigen::Quaterniond(m_ema_r)
-                          .slerp(a, Eigen::Quaterniond(cand_r))
-                          .toRotationMatrix();
             m_rejects = 0;
             out.accepted = true;
-            if (m_awaiting_recovery && ++m_accepts >= m_cfg.recovery_accepts)
+            if (m_awaiting_recovery)
             {
-                m_awaiting_recovery = false;
-                m_valid = true;
-                out.recovered = true;
+                // Degraded: the tracking reference follows the accepted candidates, but the
+                // PUBLISHED transform stays at the last trusted value until recovery.  A
+                // consumer that ignores relocalize_check must not be handed a pose the gate has
+                // not corroborated the required number of times.
+                if (++m_accepts >= m_cfg.recovery_accepts)
+                {
+                    m_awaiting_recovery = false;
+                    m_valid = true;
+                    out.recovered = true;
+                    // Recovered: release the frozen output.  Snapped, not EMA-blended, because
+                    // blending from the deliberately frozen value would sweep the published
+                    // transform through intermediate poses nobody vouched for.
+                    setPublished(cand_r, cand_t, true);
+                }
+            }
+            else
+            {
+                setPublished(cand_r, cand_t);
             }
         }
         else
@@ -155,11 +176,15 @@ public:
             m_accepts = 0;
             if (++m_rejects >= m_cfg.max_consecutive_rejects)
             {
-                // Bounded recovery: re-seed on the candidate so tracking can resume, report the
-                // lock as INVALID, and KEEP GATING - the reference is the freshly seeded
-                // candidate, so the very next update is checked against it again (the node must
-                // therefore not bypass the gate while it is not valid).
-                reset(cand_r, cand_t);
+                // Bounded recovery: re-seed the REFERENCE on the candidate so tracking can
+                // resume, report the lock as INVALID, and KEEP GATING - the very next update is
+                // checked against the new reference again (the node must therefore not bypass
+                // the gate while it is not valid).  The published transform is NOT touched: a
+                // rejected candidate must never become the published map<-odom, whatever the
+                // reason for re-seeding, because the output carries no validity flag.
+                m_raw_r = cand_r;
+                m_raw_t = cand_t;
+                m_rejects = 0;
                 m_awaiting_recovery = true;
                 m_valid = false;
                 out.lost = true;
@@ -170,6 +195,22 @@ public:
     }
 
 private:
+    // EMA-smooth the PUBLISHED transform (an accepted update in normal operation).
+    void setPublished(const M3D &r, const V3D &t, bool snap = false)
+    {
+        if (snap)
+        {
+            m_ema_r = r;
+            m_ema_t = t;
+            return;
+        }
+        const double a = m_cfg.ema_alpha;
+        m_ema_t = (1.0 - a) * m_ema_t + a * t;
+        m_ema_r = Eigen::Quaterniond(m_ema_r)
+                      .slerp(a, Eigen::Quaterniond(r))
+                      .toRotationMatrix();
+    }
+
     OffsetGateConfig m_cfg;
     bool m_engaged = false;
     bool m_valid = false;

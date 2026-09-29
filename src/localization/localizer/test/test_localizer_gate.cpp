@@ -124,17 +124,60 @@ TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
         EXPECT_EQ(gate.consecutiveRejects(), i);
     }
 
-    // The third rejection crosses max_consecutive_rejects: report lost and re-seed on the
-    // candidate (which is also published, so the transform is not frozen on a stale value).
+    // The third rejection crosses max_consecutive_rejects: report lost and re-seed the internal
+    // tracking REFERENCE on the candidate...
+    const V3D trusted = gate.published_t();
     const OffsetGateOutcome lost = gate.update(M3D::Identity(), jump, body_t);
     EXPECT_TRUE(lost.lost);
     EXPECT_EQ(lost.consecutive_rejects, 0); // reset by the re-seed
-    EXPECT_LT((gate.published_t() - jump).norm(), 1e-12);
+    EXPECT_LT((gate.reference_t() - jump).norm(), 1e-12);
+    // ... while the PUBLISHED transform stays at the last trusted value: a rejected candidate
+    // must never reach TF (see the dedicated test below).
+    EXPECT_LT((gate.published_t() - trusted).norm(), 1e-12);
 
     // Tracking resumes from the new reference instead of rejecting everything forever.
     const OffsetGateOutcome resumed = gate.update(M3D::Identity(), jump + V3D(0.01, 0.0, 0.0),
                                                   body_t);
     EXPECT_TRUE(resumed.accepted);
+    EXPECT_TRUE(gate.awaitingRecovery());
+}
+
+TEST(OffsetGate, RejectedCandidateNeverBecomesThePublishedTransform)
+{
+    OffsetGateConfig cfg = testConfig();
+    cfg.recovery_accepts = 2;
+    OffsetOutlierGate gate(cfg);
+    const V3D body_t(5.0, 0.0, 0.0);
+
+    // Operator lock: published = the accepted candidate, valid.
+    gate.update(M3D::Identity(), V3D::Zero(), body_t, true);
+    EXPECT_TRUE(gate.valid());
+    const V3D trusted = gate.published_t();
+
+    // 3 consecutive rejections of a 1 m jump -> lost.  The rejected candidate becomes the
+    // internal reference but NOT the published transform (TF carries no validity flag, so a
+    // consumer that ignores relocalize_check would otherwise be handed a pose the gate itself
+    // rejected).
+    const V3D jump(1.0, 0.0, 0.0);
+    for (int i = 0; i < 3; ++i)
+        gate.update(M3D::Identity(), jump, body_t);
+    EXPECT_FALSE(gate.valid());
+    EXPECT_LT((gate.published_t() - trusted).norm(), 1e-12);
+    EXPECT_LT((gate.reference_t() - jump).norm(), 1e-12);
+
+    // Plausible updates while degraded keep following the tracker internally, but the output
+    // stays frozen until the lock has recovered.
+    OffsetGateOutcome out = gate.update(M3D::Identity(), jump + V3D(0.01, 0.0, 0.0), body_t);
+    EXPECT_TRUE(out.accepted);
+    EXPECT_FALSE(out.recovered);
+    EXPECT_LT((gate.published_t() - trusted).norm(), 1e-12);
+
+    // Recovery releases the output - snapped to the recovered pose, not blended through the
+    // frozen one.
+    out = gate.update(M3D::Identity(), jump + V3D(0.02, 0.0, 0.0), body_t);
+    EXPECT_TRUE(out.recovered);
+    EXPECT_TRUE(gate.valid());
+    EXPECT_LT((gate.published_t() - (jump + V3D(0.02, 0.0, 0.0))).norm(), 1e-12);
 }
 
 // ---------------------------------------------------------------------------

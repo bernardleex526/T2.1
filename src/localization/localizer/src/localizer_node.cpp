@@ -246,8 +246,15 @@ public:
         else
         {
             std::lock_guard<std::mutex> lock(m_state.message_mutex);
-            initial_guess.block<3, 3>(0, 0) = (m_state.last_offset_r * m_state.last_r).cast<float>();
-            initial_guess.block<3, 1>(0, 3) = (m_state.last_offset_r * m_state.last_t + m_state.last_offset_t).cast<float>();
+            // Seed the ICP from the gate's tracking reference (the last accepted ICP estimate,
+            // or the re-seeded one while the lock is degraded).  Not from the published
+            // transform: that is deliberately frozen at the last trusted value while the lock is
+            // invalid, and seeding a stale value would keep the tracker from ever re-locking.
+            // The published map<-odom output is not affected by this choice.
+            const M3D seed_r = m_gate.engaged() ? m_gate.reference_r() : m_state.last_offset_r;
+            const V3D seed_t = m_gate.engaged() ? m_gate.reference_t() : m_state.last_offset_t;
+            initial_guess.block<3, 3>(0, 0) = (seed_r * m_state.last_r).cast<float>();
+            initial_guess.block<3, 1>(0, 3) = (seed_r * m_state.last_t + seed_t).cast<float>();
         }
 
         M3D current_local_r;
