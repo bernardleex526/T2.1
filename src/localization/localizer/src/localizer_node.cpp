@@ -244,13 +244,39 @@ public:
         {
             M3D map_body_r = initial_guess.block<3, 3>(0, 0).cast<double>();
             V3D map_body_t = initial_guess.block<3, 1>(0, 3).cast<double>();
-            m_state.last_offset_r = map_body_r * current_local_r.transpose();
-            m_state.last_offset_t = -map_body_r * current_local_r.transpose() * current_local_t + map_body_t;
-            if (!m_state.localize_success && m_state.service_received)
+            M3D cand_offset_r = map_body_r * current_local_r.transpose();
+            V3D cand_offset_t = -map_body_r * current_local_r.transpose() * current_local_t + map_body_t;
+
+            if (!m_state.localize_success)
             {
-                std::lock_guard<std::mutex> lock(m_state.service_mutex);
-                m_state.localize_success = true;
-                m_state.service_received = false;
+                m_state.last_offset_r = cand_offset_r;
+                m_state.last_offset_t = cand_offset_t;
+                if (m_state.service_received)
+                {
+                    std::lock_guard<std::mutex> lock(m_state.service_mutex);
+                    m_state.localize_success = true;
+                    m_state.service_received = false;
+                }
+            }
+            else
+            {
+                double dt = (cand_offset_t - m_state.last_offset_t).norm();
+                Eigen::Quaterniond q_cand(cand_offset_r);
+                Eigen::Quaterniond q_prev(m_state.last_offset_r);
+                double d_angle = q_prev.angularDistance(q_cand);
+
+                // Physical consistency gate: reject jumps > 4cm or > 1.7 deg
+                if (dt <= 0.04 && d_angle <= 0.03)
+                {
+                    const double alpha = 0.10;
+                    m_state.last_offset_t = (1.0 - alpha) * m_state.last_offset_t + alpha * cand_offset_t;
+                    m_state.last_offset_r = q_prev.slerp(alpha, q_cand).toRotationMatrix();
+                }
+                else
+                {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                        "ICP update rejected by outlier gate: dt=%.3fm d_angle=%.3frad", dt, d_angle);
+                }
             }
         }
         sendBroadCastTF(current_time);

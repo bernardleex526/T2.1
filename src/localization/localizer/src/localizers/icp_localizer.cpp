@@ -38,6 +38,14 @@ bool ICPLocalizer::loadMap(const std::string &path)
     {
         pcl::copyPointCloud(*cloud, *m_rough_tgt);
     }
+
+    m_rough_icp.setMaximumIterations(m_config.rough_max_iteration);
+    m_rough_icp.setMaxCorrespondenceDistance(0.35);
+    m_rough_icp.setInputTarget(m_rough_tgt);
+
+    m_refine_icp.setMaximumIterations(m_config.refine_max_iteration);
+    m_refine_icp.setMaxCorrespondenceDistance(0.15);
+    m_refine_icp.setInputTarget(m_refine_tgt);
     return true;
 }
 void ICPLocalizer::setInput(const CloudType::Ptr &cloud)
@@ -70,17 +78,13 @@ bool ICPLocalizer::align(M4F &guess)
     CloudType::Ptr aligned_cloud(new CloudType);
     if (m_refine_tgt->size() == 0 || m_rough_tgt->size() == 0)
         return false;
-    m_rough_icp.setMaximumIterations(m_config.rough_max_iteration);
     m_rough_icp.setInputSource(m_rough_inp);
-    m_rough_icp.setInputTarget(m_rough_tgt);
     m_rough_icp.align(*aligned_cloud, guess);
-    if (!m_rough_icp.hasConverged() || m_rough_icp.getFitnessScore() > m_config.rough_score_thresh)
+    if (!m_rough_icp.hasConverged() || m_rough_icp.getFitnessScore(0.35) > m_config.rough_score_thresh)
         return false;
-    m_refine_icp.setMaximumIterations(m_config.refine_max_iteration);
     m_refine_icp.setInputSource(m_refine_inp);
-    m_refine_icp.setInputTarget(m_refine_tgt);
     m_refine_icp.align(*aligned_cloud, m_rough_icp.getFinalTransformation());
-    if (!m_refine_icp.hasConverged() || m_refine_icp.getFitnessScore() > m_config.refine_score_thresh)
+    if (!m_refine_icp.hasConverged() || m_refine_icp.getFitnessScore(0.15) > m_config.refine_score_thresh)
         return false;
     guess = m_refine_icp.getFinalTransformation();
     return true;
