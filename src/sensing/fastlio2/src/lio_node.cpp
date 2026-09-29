@@ -219,6 +219,10 @@ private:
             if (config["nbg"]) m_builder_config.nbg = config["nbg"].as<double>();
 
             if (config["imu_init_num"]) m_builder_config.imu_init_num = config["imu_init_num"].as<int>();
+            if (config["imu_init_window_s"]) m_builder_config.imu_init_window_s = config["imu_init_window_s"].as<double>();
+            if (config["imu_init_static_gyro_std"]) m_builder_config.imu_init_static_gyro_std = config["imu_init_static_gyro_std"].as<double>();
+            if (config["imu_init_static_acc_dev"]) m_builder_config.imu_init_static_acc_dev = config["imu_init_static_acc_dev"].as<double>();
+            if (config["imu_init_max_wait_s"]) m_builder_config.imu_init_max_wait_s = config["imu_init_max_wait_s"].as<double>();
             if (config["near_search_num"]) m_builder_config.near_search_num = config["near_search_num"].as<int>();
             if (config["ieskf_max_iter"]) m_builder_config.ieskf_max_iter = config["ieskf_max_iter"].as<int>();
             if (config["gravity_align"]) m_builder_config.gravity_align = config["gravity_align"].as<bool>();

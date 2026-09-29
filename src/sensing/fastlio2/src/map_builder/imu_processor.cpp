@@ -17,17 +17,97 @@ IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config
 bool IMUProcessor::initialize(SyncPackage &package)
 {
     m_imu_cache.insert(m_imu_cache.end(), package.imus.begin(), package.imus.end());
-    if (m_imu_cache.size() < static_cast<size_t>(m_config.imu_init_num))
-        return false;
+    const bool use_static_window = m_config.imu_init_window_s > 0.0;
+    if (!use_static_window)
+    {
+        if (m_imu_cache.size() < static_cast<size_t>(m_config.imu_init_num))
+            return false;
+        // legacy path: initialize from everything collected so far (see below via window == full cache)
+    }
+    else
+    {
+        const double span = m_imu_cache.back().time - m_imu_cache.front().time;
+        if (span < m_config.imu_init_window_s && span < m_config.imu_init_max_wait_s)
+            return false;
+    }
+
+    // Pick the analysis window: legacy = whole cache; static-window mode = the quietest
+    // contiguous window of imu_init_window_s inside the cache (best = min per-axis gyro std).
+    // Scoring all windows keeps the init general: whatever the platform (dog, handheld),
+    // bg/gravity are estimated over a genuinely stationary stretch when one exists.
+    size_t n = m_imu_cache.size();
+    size_t i0 = 0, i1 = n; // [i0, i1)
+    if (use_static_window)
+    {
+        const double w = m_config.imu_init_window_s;
+        size_t wlen = 1;
+        while (wlen < n && m_imu_cache[wlen].time - m_imu_cache[0].time < w)
+            ++wlen;
+        if (wlen >= n)
+            wlen = n;
+        double best_score = 1e18;
+        for (size_t s = 0; s + wlen <= n; ++s)
+        {
+            V3D gm = V3D::Zero(), am = V3D::Zero(), gdev = V3D::Zero(), adev = V3D::Zero();
+            for (size_t k = s; k < s + wlen; ++k)
+            {
+                gm += m_imu_cache[k].gyro;
+                am += m_imu_cache[k].acc;
+            }
+            gm /= wlen; am /= wlen;
+            for (size_t k = s; k < s + wlen; ++k)
+            {
+                gdev += (m_imu_cache[k].gyro - gm).cwiseAbs2();
+                adev += (m_imu_cache[k].acc - am).cwiseAbs2();
+            }
+            gdev = (gdev / wlen).cwiseSqrt();
+            adev = (adev / wlen).cwiseSqrt();
+            double score = gdev.maxCoeff();
+            if (score < best_score)
+            {
+                best_score = score;
+                i0 = s;
+                i1 = s + wlen;
+            }
+        }
+        const double span = m_imu_cache.back().time - m_imu_cache.front().time;
+        const bool waited_out = span >= m_config.imu_init_max_wait_s && !(span >= m_config.imu_init_window_s && best_score < m_config.imu_init_static_gyro_std);
+        // Static verdict on the chosen window
+        V3D gm = V3D::Zero(), gdev = V3D::Zero(), adev = V3D::Zero();
+        {
+            V3D am = V3D::Zero();
+            for (size_t k = i0; k < i1; ++k)
+            {
+                gm += m_imu_cache[k].gyro;
+                am += m_imu_cache[k].acc;
+            }
+            gm /= (i1 - i0);
+            am /= (i1 - i0);
+            for (size_t k = i0; k < i1; ++k)
+            {
+                gdev += (m_imu_cache[k].gyro - gm).cwiseAbs2();
+                adev += (m_imu_cache[k].acc - am).cwiseAbs2();
+            }
+            gdev = (gdev / (i1 - i0)).cwiseSqrt();
+            adev = (adev / (i1 - i0)).cwiseSqrt();
+        }
+        const bool is_static = gdev.maxCoeff() < m_config.imu_init_static_gyro_std &&
+                               adev.maxCoeff() < m_config.imu_init_static_acc_dev;
+        if (!is_static && !waited_out)
+            return false; // keep waiting for a static window
+        RCLCPP_WARN(m_logger, "IMU init window [%zu,%zu)/%zu gyro_std=%.5f acc_dev=%.4f static=%d waited_out=%d",
+                    i0, i1, n, gdev.maxCoeff(), adev.maxCoeff(), (int)is_static, (int)waited_out);
+    }
+
     V3D acc_mean = V3D::Zero();
     V3D gyro_mean = V3D::Zero();
-    for (const auto &imu : m_imu_cache)
+    for (size_t k = i0; k < i1; ++k)
     {
-        acc_mean += imu.acc;
-        gyro_mean += imu.gyro;
+        acc_mean += m_imu_cache[k].acc;
+        gyro_mean += m_imu_cache[k].gyro;
     }
-    acc_mean /= static_cast<double>(m_imu_cache.size());
-    gyro_mean /= static_cast<double>(m_imu_cache.size());
+    acc_mean /= static_cast<double>(i1 - i0);
+    gyro_mean /= static_cast<double>(i1 - i0);
     m_kf->x().r_il = m_config.r_il;
     m_kf->x().t_il = m_config.t_il;
     m_kf->x().bg = gyro_mean;

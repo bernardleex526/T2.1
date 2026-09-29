@@ -47,6 +47,13 @@ struct Config
     double nba = 0.0001;
     double nbg = 0.0001;
     int imu_init_num = 20;
+    // Static-window IMU init (round 2): when imu_init_window_s > 0, initialization waits for a
+    // stationary window of that length (gyro/accel variance thresholds) instead of a fixed sample
+    // count, so bg/gravity come from the full quiet period rather than its first 0.25 s.
+    double imu_init_window_s = 0.0;
+    double imu_init_static_gyro_std = 0.005; // rad/s per axis
+    double imu_init_static_acc_dev = 0.3;    // m/s^2 per axis deviation from window mean
+    double imu_init_max_wait_s = 15.0;       // fall back to the quietest window after this
     int near_search_num = 5;
     int ieskf_max_iter = 5;
     bool gravity_align = true;
