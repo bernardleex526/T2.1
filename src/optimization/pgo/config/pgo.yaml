@@ -31,15 +31,32 @@ loop_search_radius: 8.0           # radius-search bound [m]; must exceed the acc
                                   # mid360s_office_loop_01) or real loops are never proposed.
 loop_time_tresh: 60.0             # temporal separation guard [s]: a candidate keyframe must
                                   # be at least this far from the current one.
-min_loop_detect_duration: 5.0     # rate limit [s] between two detection events; bounds the
-                                  # cost of the cascade (each event runs up to
-                                  # max_loop_candidates_per_query registrations).
+min_loop_detect_duration: 2.0     # rate limit [s] between two DETECTION events (STEP 3:
+                                  # measured from the last event, not from the last accepted
+                                  # loop - the old accept-based version suppressed every
+                                  # remaining event of a run once a loop was accepted near
+                                  # the end, which on mid360s_office_loop_01 twice ate the
+                                  # strongest loop of the sequence, kf370<->kf55).  2 s
+                                  # bounds the cascade cost (<= 0.5 events/s, up to
+                                  # max_loop_candidates_per_query registrations each) while
+                                  # giving every keyframe region ~1 in 3 detection chances;
+                                  # a 5 s limit left the end-of-loop revisit corridor of this
+                                  # sequence with only 2 events and a 0/34 acceptance run.
 
 max_loop_candidates_per_query: 3  # registrations attempted per detection event, best
                                   # descriptor distance first.
 max_accepted_loops_per_query: 1   # loop factors added per detection event.
-loop_source_submap_half_range: 0  # source cloud = the current keyframe alone (0) or a local
-                                  # map around it.
+loop_source_submap_half_range: 2  # STEP 3: source cloud = +-2 keyframes around the current
+                                  # one (~1.4 m of travel at this keyframe spacing), not the
+                                  # current keyframe alone.  Basis: with a single-scan source
+                                  # the overlap gate starves exactly the genuine revisits -
+                                  # a single MID-360 scan shares only 0.40-0.45 of its points
+                                  # with a +-5 keyframe target submap (measured on the
+                                  # accepted genuine loop of run loop-b0: overlap 0.442,
+                                  # and in run loop-b5 every end-of-loop candidate failed
+                                  # ONLY the overlap gate with a single-scan source).  The
+                                  # descriptor is still built from the single keyframe cloud;
+                                  # only the registration input is accumulated.
 loop_submap_half_range: 5         # target cloud = +-5 keyframes around the candidate
                                   # (measured in keyframes, each keyframe is ~0.5 m apart).
 submap_resolution: 0.1            # VoxelGrid applied when building the submaps [m].
@@ -73,6 +90,11 @@ coarse_max_corr_dist: 3.0         # [m] correspondence radius. Must exceed the r
                                   # the scene's range: 6 deg at 20 m is 2.1 m, so 3.0 m is the
                                   # practical floor.
 coarse_max_iterations: 64
+coarse_wide_corr_dist: 5.0        # [m] the coarse stage runs TWO passes: pass 1 at this wide
+                                  # correspondence distance (absorbs a seed whose translation
+                                  # is wrong by metres - e.g. the odometry-prior seed of a
+                                  # genuinely drifted revisit, 2-4.8 m on this sequence),
+                                  # pass 2 at coarse_max_corr_dist from pass 1's result.
 coarse_max_rmse: 1.5              # [m] GROSS-FAILURE bound on the coarse stage: sqrt() of the
                                   # PCL fitness score, i.e. the RMS nearest-neighbour distance
                                   # over ALL source points (PCL's score is a mean SQUARED
@@ -150,35 +172,88 @@ degeneracy_min_eig_ratio: 0.003   # Reject when lambda_min/lambda_max of
                                   # distribution and for the synthetic check that the statistic
                                   # does go to ~0 for a truly unconstrained direction.
 
-max_loop_correction: 2.0          # [m] Plausibility bound on the CORRECTION a candidate
-                                  # demands. Perception is aliased: an office corridor repeats
-                                  # every few metres, so the descriptor happily matched two
-                                  # keyframes 16-19 m apart whose clouds really do overlap
-                                  # (measured on this sequence: overlap 0.55-0.57, plane RMS
-                                  # 0.029-0.038 m) while the odometry says the platform was 16-19 m
-                                  # away - i.e. those matches demand more drift correction than
-                                  # the trajectory ever accumulated anywhere (its end-of-loop
-                                  # drift is 5.87 m over 134 m). Rejecting them is the
-                                  # "prefer a missed loop over a wrong one" rule applied to the
-                                  # one failure mode the geometric gates cannot see.
-                                  # Basis: the genuine revisit of this sequence disagrees with
-                                  # the odometry by only 0.16 m (the drift is a smooth
-                                  # deformation: two keyframes that are physically co-located are
-                                  # moved by nearly the same amount), while every aliased match
-                                  # that reached this gate demanded 1.3-25 m. 2.0 m is 12x the
-                                  # measured genuine value and below the smallest measured alias
-                                  # that actually damaged the graph (5.6 m, run step12-B2).
-                                  # SET THIS from your own platform's drift behaviour.
+max_loop_correction: 2.0          # [m] FLOOR of the plausibility bound on the CORRECTION a
+                                  # candidate demands.  The bound actually applied is
+                                  #   max(max_loop_correction, correction_drift_ratio * path_m)
+                                  # where path_m is the cumulative raw-odometry path length
+                                  # between the two keyframes of the pair.  A fixed absolute
+                                  # bound is wrong on both ends: too tight for long loops (the
+                                  # genuine end-of-loop family of this sequence legitimately
+                                  # carries corrections up to 3.26 m, e.g. kf357<->kf70) and
+                                  # too loose for short ones.
+correction_drift_ratio: 0.05      # correction bound grows by 5 % of the travelled path
+                                  # between the pair.  Basis: the measured genuine relative
+                                  # drift of this sequence is 0.096 m over 164 s / ~118 m of
+                                  # path (0.08 %); 5 % of path is ~60x that, while every
+                                  # measured perceptual alias demands 6-25 m, i.e. 7-19 % of
+                                  # its own inter-keyframe path, so it stays rejected.
+max_revisit_rel_t: 4.0            # [m] revisit-consistency gate, scan_context candidates
+                                  # only: the candidate asserts CO-LOCATION (the registration
+                                  # seeds it with zero relative translation), so a genuine
+                                  # revisit must come out with a small measured relative
+                                  # translation (measured on the genuine family: rel_t
+                                  # 0.38-2.43 m).  A candidate the registration instead
+                                  # pulled 7-10 m away is a false loop whose factor happens
+                                  # to coincide with odometry (measured: kf217<->kf80 passed
+                                  # EVERY geometric gate at rel_t 7.06 m - the coarse GICP
+                                  # slid along repeating corridor geometry).
 
-max_yaw_disagreement: 15.0        # [deg] scan-context candidates only (a radius-search
-                                  # candidate has no descriptor yaw): |descriptor relative yaw -
-                                  # odometry relative yaw|, i.e. a consistency check between two
-                                  # INDEPENDENT yaw estimates of the same relative pose. They
-                                  # agree up to the yaw drift accumulated between the two visits
-                                  # (~1 deg on this office loop); a perceptual alias has an
-                                  # arbitrary relative yaw. Measured: the genuine revisit
-                                  # disagrees by 0.9 deg, the aliased candidates that the
-                                  # geometric gates admitted by 18-171 deg.
+min_odo_correction: 0.3           # [m] minimum measured CORRECTION for the odometry-prior
+                                  # seed to count as a loop.  Registration must measurably
+                                  # PULL the two clouds together (measured rel_t at least
+                                  # this much shorter than the odometry separation);
+                                  # otherwise the pair is an odometry no-op (any two nearby
+                                  # keyframes with overlapping submaps pass the geometric
+                                  # gates at the odometry prior, e.g. kf228<->kf75,
+                                  # separation 6.6 m, overlap 0.48 - not a loop).  The
+                                  # co-located seed is exempt: it does not use the odometry
+                                  # translation, so a small measured correction there is
+                                  # still a genuine revisit (kf370<->kf55, 0.096 m).
+
+cross_seed_max: 1.0               # [m] cross-seed agreement gate.  The co-located+descriptor
+                                  # yaw seed and the odometry-prior seed are two INDEPENDENT
+                                  # hypotheses about where the revisit is; when BOTH
+                                  # registrations converge with corroborating overlap, a
+                                  # genuine revisit must measure the SAME relative pose from
+                                  # both, and a disagreement means at least one is a false
+                                  # minimum (measured: run loop-b2, kf364<->kf77 - coloc
+                                  # seed rel 4.49 m vs odom-prior seed rel 2.68 m, 1.81 m
+                                  # apart, yet the odom-prior "correction" was accepted and
+                                  # moved the end of the trajectory 1.7 m AWAY from the
+                                  # start).  Only applied when both seeds are informative
+                                  # (fine converged AND overlap >= min_overlap_ratio); a
+                                  # non-converged seed (garbage descriptor yaw) carries no
+                                  # evidence and does not veto the other.
+
+max_loop_z_offset: 0.5            # [m] z-plausibility of the measured relative translation.
+                                  # An indoor revisit of a floor-mounted sensor happens at
+                                  # (nearly) the same height and the odometry's z drift over
+                                  # a few hundred seconds is small (measured on
+                                  # mid360s_office_loop_01: 0.51 m over the whole 266 s run);
+                                  # ICP can nevertheless slide along an ambiguously supported
+                                  # floor/wall and claim a > 1 m z step (measured: run
+                                  # loop-b4, accepted loop kf368<->kf53 claimed t_offset.z
+                                  # = 1.13 m, deformed the end of the trajectory - the
+                                  # start-end gap went 5.9 -> 9.5 m - and WORSENED the map
+                                  # thickness from 0.0109 to 0.0163 m mean).  0.5 m is ~2x
+                                  # the sequence's whole-loop z drift.
+
+max_yaw_disagreement: 15.0        # [deg] consistency check between two INDEPENDENT yaw
+                                  # estimates of the same relative pose: the MEASURED relative
+                                  # yaw of the final registration (expressed in the target
+                                  # keyframe's body frame) vs the odometry's relative yaw.
+                                  # STEP 3 NOTE: this used to compare the DESCRIPTOR yaw
+                                  # against odometry, which rejected the genuine end-of-loop
+                                  # family of this sequence (the SC sector argmax is ambiguous
+                                  # under the 90-180 deg heading changes of an office loop:
+                                  # descriptor yaw disagrees with odometry by 37-178 deg for
+                                  # genuinely revisited pairs).  The descriptor yaw now only
+                                  # seeds the coarse stage (one of two seeds: the other is the
+                                  # odometry relative pose), and the gate checks what the
+                                  # registration actually measured.  Measured: the accepted
+                                  # genuine loop kf370<->kf55 measures 96.5 deg vs odometry
+                                  # 99.5 deg; a corridor-slide false loop is caught by
+                                  # max_revisit_rel_t instead.
                                   # ASSUMPTION: your odometry's yaw drift stays below this.
 
 # ===== D2 fix: loop-closure noise model =====

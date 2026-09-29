@@ -101,6 +101,13 @@ struct RegistrationConfig
                                            // descriptor yaw is applied; 6 deg quantisation at a
                                            // 20 m lever arm is 2.1 m, so 3.0 m is the floor
     int coarse_max_iterations = 64;
+    // STEP 3: the coarse stage runs TWO passes.  Pass 1 uses this wide correspondence
+    // distance so that a seed whose translation is wrong by up to ~1/2 of it can still walk
+    // to the right minimum (measured on mid360s_office_loop_01: seeding a genuine revisit
+    // with the odometry relative pose puts the clouds 2-4.8 m apart, which a single 3.0 m
+    // pass cannot fully absorb); pass 2 re-runs at coarse_max_corr_dist_m from pass 1's
+    // result.  Values below coarse_max_corr_dist_m are ignored (pass 1 == pass 2).
+    double coarse_wide_corr_dist_m = 5.0;
     double coarse_max_rmse_m = 0.35;       // sqrt() of the PCL fitness score, i.e. metres
     // Stage B: fine, point-to-plane ICP.
     double fine_voxel_resolution_m = 0.10;
@@ -154,14 +161,78 @@ struct GateConfig
     // Applied to both detectors; for the radius detector it is nearly vacuous, because those
     // candidates never assert co-location and the registration stays at the odometry prior.
     double max_loop_correction_m = 2.0;
-    // Yaw-consistency gate, scan-context candidates only (a radius-search candidate has no
-    // descriptor yaw at all, so the gate cannot apply to it).  The descriptor's relative yaw and
-    // the odometry's relative yaw are two INDEPENDENT estimates of the same quantity; they agree
-    // up to the yaw drift accumulated between the two visits, which for an office loop of a few
-    // hundred seconds is a couple of degrees.  A perceptual alias, by contrast, has an arbitrary
-    // relative yaw.  Measured on this sequence: the genuine revisit disagrees by 0.9 deg, the
-    // aliased candidates that the geometric gates admitted disagree by 18-171 deg.  15 deg is
-    // 16x the measured genuine value and 12x below the smallest measured alias.
+    // STEP 3: the correction bound above is a FLOOR.  The bound actually applied is
+    //   max(max_loop_correction_m, correction_drift_ratio * travelled_path_m)
+    // where travelled_path_m is the cumulative raw-odometry path length between the two
+    // keyframes of the pair.  Rationale: drift grows with distance travelled, so a fixed
+    // absolute bound is either too tight for long loops (a genuine revisit after 120 m of
+    // driving legitimately carries a ~2-3 m correction - measured on
+    // mid360s_office_loop_01: kf357<->kf70 demands 3.26 m after 154 s / ~118 m of travel)
+    // or too loose for short ones.  0.05 = 5 % of path is ~25x the measured genuine
+    // relative drift of this sequence (0.096 m over 164 s) while every measured perceptual
+    // alias of this sequence demands 6-25 m (7-19 % of its own inter-keyframe path).
+    double correction_drift_ratio = 0.05;
+    // STEP 3: revisit-consistency gate (scan_context candidates only).  A scan-context
+    // candidate asserts CO-LOCATION: the registration seeds it with zero relative
+    // translation, so a genuine revisit must come out with a small measured relative
+    // translation (two keyframes ~0.5-0.7 m apart that revisited each other are at most a
+    // few metres apart physically - measured on the genuine family of this sequence:
+    // rel_t 0.38-2.43 m).  A candidate the registration instead pulled 7-10 m away
+    // (kf217<->kf80: accepted by every geometric gate, rel_t 7.06 m - the coarse GICP slid
+    // along repeating corridor geometry until it agreed with the odometry separation) is a
+    // FALSE loop whose factor happens to coincide with odometry; reject it explicitly.
+    double max_revisit_rel_t_m = 4.0;
+    // STEP 3: minimum measured CORRECTION for the odometry-prior seed to count as a loop.
+    // The odometry-prior seed ("are the two scans consistent with what odometry already
+    // claims?") trivially passes the geometric gates for any two NEARBY keyframes whose
+    // submaps overlap, without the pair being a revisit at all (measured on
+    // mid360s_office_loop_01: kf228<->kf75, separation 6.6 m, overlap 0.48, plane RMSE
+    // 0.022 m - an odometry no-op, not a loop).  A loop factor is only worth adding when
+    // registration measurably PULLED the two clouds together, i.e. the measured relative
+    // translation is at least this much SHORTER than the odometry separation; otherwise
+    // the candidate carries no information odometry does not already have and is rejected.
+    // co-located seed is exempt: it does not use the odometry translation at all, so a
+    // small measured correction there is still a genuine revisit (e.g. kf370<->kf55,
+    // correction 0.096 m, accepted).
+    double min_odo_correction_m = 0.3;
+    // STEP 3: cross-seed agreement.  The two seeds are two INDEPENDENT hypotheses about
+    // where the revisit is: co-located + descriptor yaw, and the odometry relative pose.
+    // When BOTH registrations converge with corroborating overlap, a genuine revisit must
+    // measure the SAME relative translation from both (the surfaces attract to one pose);
+    // a disagreement means at least one of them is a false minimum and neither can be
+    // trusted (measured on mid360s_office_loop_01, run loop-b2: kf364<->kf77 - co-located
+    // seed converges to rel_t 4.49 m, odometry-prior seed to 2.68 m, 1.81 m apart; the
+    // odometry-prior seed "measured a 2.17 m correction" that the other hypothesis
+    // contradicts).  Applied only when both seeds are informative (fine converged AND
+    // overlap >= min_overlap_ratio); a seed that did not converge (e.g. garbage descriptor
+    // yaw) carries no evidence either way and does not veto the other.
+    double cross_seed_max_m = 1.0;
+    // STEP 3: z-plausibility of the loop factor translation.  The z component of the
+    // measured relative translation must stay within this bound.  Basis: an indoor
+    // revisit of a floor-mounted sensor happens at (nearly) the same height, and the z
+    // drift of the odometry over a few hundred seconds is small (measured on
+    // mid360s_office_loop_01: 0.51 m over the whole 266 s run) - yet ICP can slide along
+    // an ambiguously-supported floor/wall and claim a > 1 m z step (measured: run loop-b4,
+    // accepted loop kf368<->kf53 claimed t_offset.z = 1.13 m, deformed the end of the
+    // trajectory and WORSENED the map thickness from 0.0109 to 0.0163 m mean).  0.5 m is
+    // ~2x the sequence's whole-loop z drift.  Set from your platform's z-drift behaviour.
+    double max_loop_z_offset_m = 0.5;
+    // Yaw-consistency gate.  The MEASURED relative yaw of the accepted registration (the
+    // final fine-stage rotation about Z, expressed in the target keyframe's body frame) and
+    // the odometry's relative yaw are two independent estimates of the same quantity; they
+    // agree up to the yaw drift accumulated between the two visits (a couple of degrees on
+    // an office loop).  A perceptual alias that slides along repeating corridor geometry has
+    // an arbitrary measured relative yaw.
+    // STEP 3 NOTE: the pre-STEP-3 form compared the DESCRIPTOR yaw against odometry.  That
+    // is unsound for revisits approached from a different direction: on this sequence the
+    // descriptor yaw of the genuine end-of-loop family disagrees with odometry by 37-178 deg
+    // (SC's sector argmax is ambiguous under the ~90-180 deg heading changes of an office
+    // loop), so the old gate rejected exactly the loops that should close.  The descriptor
+    // yaw now only SEEDS the coarse stage; the gate is applied to what the registration
+    // actually measured.  Measured on this sequence: the accepted genuine loop
+    // kf370<->kf55 measures 96.5 deg vs odometry 99.5 deg (3.5 deg apart); the corridor-slide
+    // false loop kf217<->kf80 measures 6.5 deg vs odometry 6.5 deg (it slid back onto the
+    // odometry prior and is caught by the revisit_offset gate instead).
     // ASSUMPTION: the odometry's yaw drift between the two visits stays below this threshold.
     double max_yaw_disagreement_deg = 15.0;
 };

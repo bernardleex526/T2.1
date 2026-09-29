@@ -272,7 +272,17 @@ RegistrationResult runRegistrationCascade(const CloudType::Ptr &target_submap_wo
     RegistrationResult res;
     std::string reject;
 
-    // ---------------- stage A: coarse GICP with the descriptor-yaw initial guess ------------
+    // ---------------- stage A: coarse GICP, two-stage with keep-best -------------------
+    // Stage A1: a wide-correspondence pass (absorbs a seed whose translation is wrong by
+    // metres) followed by the narrow pass, run ONLY when it beats the direct narrow pass:
+    // the narrow pass is always run first from the seed itself, and the wide->narrow chain
+    // may replace it only if it reaches a LOWER RMSE (measured: seeding a marginal
+    // candidate like kf357<->kf70 with the co-located hypothesis, a blind wide pass walks
+    // the registration away from an already-close minimum and makes the RMSE worse).
+    // hasConverged() is not fatal by itself: a candidate whose final coarse RMSE is inside
+    // the budget still goes to the fine stage (measured: kf368<->kf55 of
+    // mid360s_office_loop_01 reached 0.386 m RMSE with converged==false at 64 iterations
+    // and its fine stage completes the alignment).
     {
         Clock::time_point t0 = Clock::now();
         CloudType::Ptr tgt = voxelDownsample(target_submap_world, rc.coarse_voxel_resolution_m);
@@ -283,26 +293,51 @@ RegistrationResult runRegistrationCascade(const CloudType::Ptr &target_submap_wo
         }
         else
         {
-            fast_gicp::FastGICP<PointType, PointType> gicp;
-            gicp.setNumThreads(4);
-            gicp.setCorrespondenceRandomness(rc.correspondence_randomness);
-            gicp.setMaximumIterations(rc.coarse_max_iterations);
-            gicp.setMaxCorrespondenceDistance(rc.coarse_max_corr_dist_m);
-            gicp.setTransformationEpsilon(1e-8);
-            gicp.setEuclideanFitnessEpsilon(1e-8);
-            gicp.setRANSACIterations(0);
-            gicp.setInputTarget(tgt);
-            gicp.setInputSource(src);
-            CloudType::Ptr out(new CloudType);
-            gicp.align(*out, init_guess.cast<float>());
-            res.coarse_converged = gicp.hasConverged();
+            auto run_gicp = [&](double corr_dist, const M4D &guess, M4D *out_T) -> std::pair<double, bool>
+            {
+                fast_gicp::FastGICP<PointType, PointType> gicp;
+                gicp.setNumThreads(4);
+                gicp.setCorrespondenceRandomness(rc.correspondence_randomness);
+                gicp.setMaximumIterations(rc.coarse_max_iterations);
+                gicp.setMaxCorrespondenceDistance(corr_dist);
+                gicp.setTransformationEpsilon(1e-8);
+                gicp.setEuclideanFitnessEpsilon(1e-8);
+                gicp.setRANSACIterations(0);
+                gicp.setInputTarget(tgt);
+                gicp.setInputSource(src);
+                CloudType::Ptr out(new CloudType);
+                gicp.align(*out, guess.cast<float>());
+                if (gicp.hasConverged())
+                    *out_T = gicp.getFinalTransformation().cast<double>();
+                return {std::sqrt(gicp.getFitnessScore()), gicp.hasConverged()};
+            };
+
+            M4D best_T = init_guess;
+            auto [best_rmse, best_conv] = run_gicp(rc.coarse_max_corr_dist_m, init_guess, &best_T);
+            if (rc.coarse_wide_corr_dist_m > rc.coarse_max_corr_dist_m)
+            {
+                M4D wide_T = init_guess;
+                auto [wide_rmse, wide_conv] =
+                    run_gicp(rc.coarse_wide_corr_dist_m, init_guess, &wide_T);
+                if (wide_conv)
+                {
+                    M4D narrow_T = wide_T;
+                    auto [narrow_rmse, narrow_conv] =
+                        run_gicp(rc.coarse_max_corr_dist_m, wide_T, &narrow_T);
+                    if (narrow_rmse < best_rmse)
+                    {
+                        best_T = narrow_T;
+                        best_rmse = narrow_rmse;
+                        best_conv = narrow_conv;
+                    }
+                }
+            }
+            res.coarse_converged = best_conv;
             // PCL's fitness score is the MEAN SQUARED nearest-neighbour distance [m^2]; the
             // square root is the interpretable residual in metres.
-            res.coarse_rmse_m = std::sqrt(gicp.getFitnessScore());
-            res.fine_transform = gicp.getFinalTransformation().cast<double>();
-            if (!res.coarse_converged)
-                reject = "coarse_not_converged";
-            else if (!(res.coarse_rmse_m <= rc.coarse_max_rmse_m))
+            res.coarse_rmse_m = best_rmse;
+            res.fine_transform = best_T;
+            if (!(res.coarse_rmse_m <= rc.coarse_max_rmse_m))
                 reject = "coarse_rmse";
         }
         res.ms.coarse_ms = msSince(t0);

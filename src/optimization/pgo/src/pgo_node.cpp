@@ -282,6 +282,7 @@ private:
         // coarse stage
         if (config["coarse_voxel_resolution"]) m_pgo_config.reg.coarse_voxel_resolution_m = config["coarse_voxel_resolution"].as<double>();
         if (config["coarse_max_corr_dist"]) m_pgo_config.reg.coarse_max_corr_dist_m = config["coarse_max_corr_dist"].as<double>();
+        if (config["coarse_wide_corr_dist"]) m_pgo_config.reg.coarse_wide_corr_dist_m = config["coarse_wide_corr_dist"].as<double>();
         if (config["coarse_max_iterations"]) m_pgo_config.reg.coarse_max_iterations = config["coarse_max_iterations"].as<int>();
         if (config["coarse_max_rmse"]) m_pgo_config.reg.coarse_max_rmse_m = config["coarse_max_rmse"].as<double>();
         // fine stage
@@ -300,6 +301,11 @@ private:
         if (config["degeneracy_gate_enabled"]) m_pgo_config.gate.degeneracy_gate_enabled = config["degeneracy_gate_enabled"].as<bool>();
         if (config["degeneracy_min_eig_ratio"]) m_pgo_config.gate.min_eig_ratio = config["degeneracy_min_eig_ratio"].as<double>();
         if (config["max_loop_correction"]) m_pgo_config.gate.max_loop_correction_m = config["max_loop_correction"].as<double>();
+        if (config["correction_drift_ratio"]) m_pgo_config.gate.correction_drift_ratio = config["correction_drift_ratio"].as<double>();
+        if (config["max_revisit_rel_t"]) m_pgo_config.gate.max_revisit_rel_t_m = config["max_revisit_rel_t"].as<double>();
+        if (config["min_odo_correction"]) m_pgo_config.gate.min_odo_correction_m = config["min_odo_correction"].as<double>();
+        if (config["cross_seed_max"]) m_pgo_config.gate.cross_seed_max_m = config["cross_seed_max"].as<double>();
+        if (config["max_loop_z_offset"]) m_pgo_config.gate.max_loop_z_offset_m = config["max_loop_z_offset"].as<double>();
         if (config["max_yaw_disagreement"]) m_pgo_config.gate.max_yaw_disagreement_deg = config["max_yaw_disagreement"].as<double>();
         // Legacy key: the pre-STEP-1+2 single acceptance gate, a PCL ICP fitness score, i.e. a
         // MEAN SQUARED residual in m^2.  Superseded by coarse_max_rmse / fine_max_rmse [m].
@@ -342,7 +348,8 @@ private:
                     "top%zu, exclude_recent=%d, voxel=%.2fm) coarse(voxel=%.2fm corr<=%.2fm iters=%d "
                     "rmse<=%.3fm) fine(voxel=%.2fm corr<=%.2fm iters=%d rmse<=%.3fm plane_rmse<=%.3fm) "
                     "gates(overlap>=%.2f @%.2fm, degeneracy=%s eig_ratio>=%.4f) "
-                    "correction<=%.1fm, scan_context yaw agreement<=%.0fdeg candidates/query<=%d accepted/query<=%d",
+                    "correction<=%.1fm(+%.0f%%/m of travelled path), revisit_rel_t<=%.1fm, "
+                    "measured yaw agreement<=%.0fdeg candidates/query<=%d accepted/query<=%d",
                     m_pgo_config.loop_enable_scan_context ? "on" : "off",
                     m_pgo_config.loop_enable_radius_search ? "on" : "off",
                     m_pgo_config.sc.num_ring, m_pgo_config.sc.num_sector,
@@ -358,6 +365,8 @@ private:
                     m_pgo_config.gate.degeneracy_gate_enabled ? "on" : "off",
                     m_pgo_config.gate.min_eig_ratio,
                     m_pgo_config.gate.max_loop_correction_m,
+                    100.0 * m_pgo_config.gate.correction_drift_ratio,
+                    m_pgo_config.gate.max_revisit_rel_t_m,
                     m_pgo_config.gate.max_yaw_disagreement_deg,
                     m_pgo_config.max_loop_candidates_per_query,
                     m_pgo_config.max_accepted_loops_per_query);

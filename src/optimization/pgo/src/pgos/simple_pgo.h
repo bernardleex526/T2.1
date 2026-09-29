@@ -21,6 +21,9 @@ struct KeyPoseWithCloud
     M3D r_global;
     V3D t_global;
     double time;
+    // Cumulative raw-odometry path length up to this keyframe (immune to PGO corrections).
+    // Used by the relative max-correction gate (GateConfig::correction_drift_ratio).
+    double path_m = 0.0;
     CloudType::Ptr body_cloud;
 };
 struct LoopPair
@@ -40,7 +43,7 @@ struct Config
     double loop_time_tresh = 60.0;
     int loop_submap_half_range = 5;
     double submap_resolution = 0.1;
-    double min_loop_detect_duration = 10.0;
+    double min_loop_detect_duration = 2.0;
 
     // ===== STEP 1+2 front end =====
     // Two candidate detectors, either or both active:
@@ -57,7 +60,7 @@ struct Config
     // free slot, capped by max_accepted_loops_per_query.
     int max_loop_candidates_per_query = 3;
     int max_accepted_loops_per_query = 1;
-    int loop_source_submap_half_range = 0;
+    int loop_source_submap_half_range = 2;
     pgo_loop::ScanContextConfig sc;
     pgo_loop::RegistrationConfig reg;
     pgo_loop::GateConfig gate;
@@ -116,6 +119,8 @@ private:
     gtsam::NonlinearFactorGraph m_graph;
     // STEP 1+2: Scan Context descriptor database, index-aligned with m_key_poses.
     std::unique_ptr<pgo_loop::ScanContextDB> m_sc_db;
+    // STEP 3: time of the last detection event that actually ran (event-based rate limit).
+    double m_last_event_time = -1e300;
     // Cumulative front-end accounting, printed on every detection event so the run log carries
     // both the per-event decision and the run totals (see [PGO][sc] lines).
     struct FrontEndStats
