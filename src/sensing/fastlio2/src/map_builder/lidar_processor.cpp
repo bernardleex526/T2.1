@@ -203,9 +203,12 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
 
     int size = m_cloud_down_lidar->size();
 
-    // 点平面残差质量阈值(与上游 FAST-LIO2 一致)。
-    // 之前调试遗留的 0.9 + 残差 0.20 硬截断过于激进，结构稀疏处会过滤掉大半有效点，
-    // 触发 "NO Effective Points!" 使 IESKF 该帧无观测发散。现按可配阈值恢复默认 0.1。
+    // 点平面残差质量门限：s = 1 - 0.9*|点到面残差|/sqrt(|p|) 是无量纲评分（上游 FAST-LIO2 用 s > 0.9）。
+    // 该阈值本身就是 s，不是距离：同一函数里 esti_plane(points_near, 0.1, ...) 的 0.1 才是距离 [m]，
+    // 两者不可混用（历史 bug 之一就是把 0.1 当成米来理解这个门限）。
+    // 取值由 point_quality_thresh 配置决定：commons.h 默认 0.1，两个 lio yaml（lio.yaml /
+    // lio_highres.yaml）都设为 0.9。调试期曾把 0.9 + 残差 0.20 的截断硬编码在代码里，结构稀疏处
+    // 会过滤掉大半有效点，触发 "NO Effective Points!" 使 IESKF 该帧无观测发散。
     const double min_plane_quality = m_config.point_quality_thresh;
 #ifdef MP_EN
     omp_set_num_threads(MP_PROC_NUM);

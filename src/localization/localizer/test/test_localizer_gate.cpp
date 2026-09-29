@@ -38,10 +38,11 @@ TEST(OffsetGate, RotationInnovationDoesNotScaleWithLeverArm)
 {
     for (const double d : {1.0, 40.0})
     {
-        const OffsetOutlierGate gate(testConfig());
+        OffsetOutlierGate gate(testConfig());
         const M3D raw_r = M3D::Identity();
         const V3D raw_t = V3D::Zero();
         const V3D body_t(d, 0.0, 0.0);
+        gate.reset(raw_r, raw_t); // engage the gate on the reference, as after a relocalize
 
         // Raw: the transform is the identity offset, i.e. the body pose is the odometry pose.
         // Candidate: the SAME body pose, but its map<-odom offset carries a 1 mrad rotation
@@ -63,7 +64,7 @@ TEST(OffsetGate, RotationInnovationDoesNotScaleWithLeverArm)
 
 TEST(OffsetGate, BodyPoseTranslationInnovationIsGated)
 {
-    const OffsetOutlierGate gate(testConfig());
+    OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
     const OffsetGateOutcome first = gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t);
     EXPECT_TRUE(first.accepted); // not engaged yet: first lock
@@ -87,7 +88,7 @@ TEST(OffsetGate, BodyPoseTranslationInnovationIsGated)
 // ---------------------------------------------------------------------------
 TEST(OffsetGate, SteadyDriftStaysAcceptedAgainstTheLastRawCandidate)
 {
-    const OffsetOutlierGate gate(testConfig());
+    OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
     gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t); // first lock
 
@@ -110,7 +111,7 @@ TEST(OffsetGate, SteadyDriftStaysAcceptedAgainstTheLastRawCandidate)
 // ---------------------------------------------------------------------------
 TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
 {
-    const OffsetOutlierGate gate(testConfig());
+    OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
     gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t); // first lock
 
@@ -138,14 +139,17 @@ TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
 
 TEST(OffsetGate, ResetRelocksOnALargeJump)
 {
-    const OffsetOutlierGate gate(testConfig());
+    OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
     gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t);
 
-    // A relocalize request resets the gate: the next candidate is adopted unconditionally.
+    // A relocalize request resets the gate: a candidate near the NEW reference is accepted
+    // (1 cm), where the same candidate is ~10 m from the old reference and would otherwise be
+    // rejected forever.
     gate.reset(rotZ(1.0), V3D(10.0, 10.0, 0.0));
-    const OffsetGateOutcome out = gate.update(rotZ(1.0), V3D(10.0, 10.5, 0.0), M3D::Identity(), body_t);
+    const OffsetGateOutcome out = gate.update(rotZ(1.0), V3D(10.0, 10.01, 0.0), M3D::Identity(), body_t);
     EXPECT_TRUE(out.accepted);
+    EXPECT_NEAR(out.innovation_m, 0.01, 1e-12);
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +168,22 @@ CloudType::Ptr grid(double side, double spacing, double dx, double dy, int n_sid
         p.x = static_cast<float>((i % n_side) * spacing + dx);
         p.y = static_cast<float>((i / n_side) * spacing + dy);
         p.z = static_cast<float>(side);
+        p.intensity = 1.0f;
+        c->push_back(p);
+    }
+    return c;
+}
+
+// 1-D strip along x (0.01 m spacing), offset in y.
+CloudType::Ptr strip(double y)
+{
+    CloudType::Ptr c(new CloudType);
+    for (int i = 0; i < 400; ++i)
+    {
+        PointType p;
+        p.x = static_cast<float>(i * 0.01);
+        p.y = static_cast<float>(y);
+        p.z = 0.0f;
         p.intensity = 1.0f;
         c->push_back(p);
     }
@@ -204,16 +224,19 @@ TEST(FitnessAndInliers, PartialMatchIsExposedByTheInlierRatio)
 
 TEST(FitnessAndInliers, ShiftedScanDropsOutOfTheRadius)
 {
-    CloudType::Ptr tgt = grid(0.0, 0.1, 0.0, 0.0, 20, 0, 400);
-    CloudType::Ptr src = grid(0.0, 0.1, 0.5, 0.0, 20, 0, 400); // 0.5 m off in x
+    // A strip along x: unique in the (x,y) plane, so a rigid y-shift cannot land back on the
+    // cloud (a periodic lattice would - any multiple of the lattice constant keeps the nearest
+    // neighbour at 0 m, which is what a wrong test fixture looked like here at first).
+    CloudType::Ptr tgt = strip(0.0);
+    CloudType::Ptr src = strip(0.5); // every point 0.5 m off in y
     pcl::KdTreeFLANN<PointType> tree;
     tree.setInputCloud(tgt);
     double score = -1.0, ratio = -1.0;
     ASSERT_TRUE(fitnessAndInliers(tree, src, 0.35, &score, &ratio));
     EXPECT_NEAR(ratio, 0.0, 1e-12);
-    EXPECT_GT(score, 4.0); // huge, so the score gate rejects it too
+    EXPECT_GT(score, 4.0); // no inlier at all: the score is the "nothing matched" sentinel
 
-    // Inside a 0.6 m radius the same shift is a full, if poor, match.
+    // Inside a 0.6 m radius the same shift is a full, if poor, match: 0.5 m -> 0.25 m^2.
     ASSERT_TRUE(fitnessAndInliers(tree, src, 0.6, &score, &ratio));
     EXPECT_NEAR(ratio, 1.0, 1e-12);
     EXPECT_NEAR(score, 0.25, 1e-9);

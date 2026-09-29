@@ -367,7 +367,6 @@ void SimplePGO::searchForLoopPairs()
             // The odometry-prior seed may only claim a loop when registration measurably
             // pulled the two clouds together (see GateConfig::min_odo_correction_m);
             // otherwise the factor would just repeat the odometry constraint.
-            const bool is_odo_prior_seed = !is_scan_context || si == 1;
             // Correction plausibility (STEP 4): any candidate whose correction magnitude is
             // under min_odo_correction_m is an odometry no-op regardless of which seed
             // produced it.  a.corr is a magnitude (>= 0), so the bound is symmetric by
