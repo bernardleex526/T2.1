@@ -289,6 +289,7 @@ private:
         if (config["fine_max_corr_dist"]) m_pgo_config.reg.fine_max_corr_dist_m = config["fine_max_corr_dist"].as<double>();
         if (config["fine_max_iterations"]) m_pgo_config.reg.fine_max_iterations = config["fine_max_iterations"].as<int>();
         if (config["fine_max_rmse"]) m_pgo_config.reg.fine_max_rmse_m = config["fine_max_rmse"].as<double>();
+        if (config["fine_max_plane_rmse"]) m_pgo_config.reg.fine_max_plane_rmse_m = config["fine_max_plane_rmse"].as<double>();
         if (config["fine_normal_search_radius"]) m_pgo_config.reg.normal_search_radius_m = config["fine_normal_search_radius"].as<double>();
         if (config["correspondence_randomness"]) m_pgo_config.reg.correspondence_randomness = config["correspondence_randomness"].as<int>();
         // gates
@@ -298,6 +299,8 @@ private:
         if (config["min_overlap_ratio"]) m_pgo_config.gate.min_overlap_ratio = config["min_overlap_ratio"].as<double>();
         if (config["degeneracy_gate_enabled"]) m_pgo_config.gate.degeneracy_gate_enabled = config["degeneracy_gate_enabled"].as<bool>();
         if (config["degeneracy_min_eig_ratio"]) m_pgo_config.gate.min_eig_ratio = config["degeneracy_min_eig_ratio"].as<double>();
+        if (config["max_loop_correction"]) m_pgo_config.gate.max_loop_correction_m = config["max_loop_correction"].as<double>();
+        if (config["max_yaw_disagreement"]) m_pgo_config.gate.max_yaw_disagreement_deg = config["max_yaw_disagreement"].as<double>();
         // Legacy key: the pre-STEP-1+2 single acceptance gate, a PCL ICP fitness score, i.e. a
         // MEAN SQUARED residual in m^2.  Superseded by coarse_max_rmse / fine_max_rmse [m].
         // Still honoured (the eval driver's --loop-score-thresh writes this key) by mapping it
@@ -337,9 +340,9 @@ private:
         RCLCPP_INFO(this->get_logger(),
                     "LOOP FRONT END: scan_context=%s radius_search=%s sc(%dx%d, %gm, dist<=%.2f, "
                     "top%zu, exclude_recent=%d, voxel=%.2fm) coarse(voxel=%.2fm corr<=%.2fm iters=%d "
-                    "rmse<=%.3fm) fine(voxel=%.2fm corr<=%.2fm iters=%d rmse<=%.3fm) "
+                    "rmse<=%.3fm) fine(voxel=%.2fm corr<=%.2fm iters=%d rmse<=%.3fm plane_rmse<=%.3fm) "
                     "gates(overlap>=%.2f @%.2fm, degeneracy=%s eig_ratio>=%.4f) "
-                    "candidates/query<=%d accepted/query<=%d",
+                    "correction<=%.1fm, scan_context yaw agreement<=%.0fdeg candidates/query<=%d accepted/query<=%d",
                     m_pgo_config.loop_enable_scan_context ? "on" : "off",
                     m_pgo_config.loop_enable_radius_search ? "on" : "off",
                     m_pgo_config.sc.num_ring, m_pgo_config.sc.num_sector,
@@ -350,9 +353,12 @@ private:
                     m_pgo_config.reg.coarse_max_iterations, m_pgo_config.reg.coarse_max_rmse_m,
                     m_pgo_config.reg.fine_voxel_resolution_m, m_pgo_config.reg.fine_max_corr_dist_m,
                     m_pgo_config.reg.fine_max_iterations, m_pgo_config.reg.fine_max_rmse_m,
+                    m_pgo_config.reg.fine_max_plane_rmse_m,
                     m_pgo_config.gate.min_overlap_ratio, m_pgo_config.gate.overlap_radius_m,
                     m_pgo_config.gate.degeneracy_gate_enabled ? "on" : "off",
                     m_pgo_config.gate.min_eig_ratio,
+                    m_pgo_config.gate.max_loop_correction_m,
+                    m_pgo_config.gate.max_yaw_disagreement_deg,
                     m_pgo_config.max_loop_candidates_per_query,
                     m_pgo_config.max_accepted_loops_per_query);
     }

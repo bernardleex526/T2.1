@@ -214,7 +214,7 @@ static void computeCorrespondenceGates(const pcl::PointCloud<pcl::PointNormal>::
     const double r1 = gc.overlap_radius_m, r2 = gc.overlap_radius_2_m, r3 = gc.overlap_radius_3_m;
     Eigen::Matrix3d H = Eigen::Matrix3d::Zero();
     size_t n_corr = 0, n2 = 0, n3 = 0;
-    double sse_plane = 0.0;
+    double sse_plane = 0.0, sse_point = 0.0;
 
     std::vector<int> nn(1);
     std::vector<float> d2(1);
@@ -238,6 +238,7 @@ static void computeCorrespondenceGates(const pcl::PointCloud<pcl::PointNormal>::
                 aligned->points[i].getVector3fMap().cast<double>() -
                 target->points[nn[0]].getVector3fMap().cast<double>();
             sse_plane += diff.dot(n) * diff.dot(n);
+            sse_point += d * d;
         }
     }
 
@@ -247,6 +248,7 @@ static void computeCorrespondenceGates(const pcl::PointCloud<pcl::PointNormal>::
     res->overlap_2 = aligned->size() ? static_cast<double>(n2) / aligned->size() : 0.0;
     res->overlap_3 = aligned->size() ? static_cast<double>(n3) / aligned->size() : 0.0;
     res->fine_plane_rmse_m = n_corr ? std::sqrt(sse_plane / n_corr) : -1.0;
+    res->inlier_rmse_m = n_corr ? std::sqrt(sse_point / n_corr) : -1.0;
 
     if (n_corr >= 3)
     {
@@ -355,6 +357,8 @@ RegistrationResult runRegistrationCascade(const CloudType::Ptr &target_submap_wo
         failed.push_back("fine_not_converged");
     if (!(res.fine_rmse_m <= rc.fine_max_rmse_m))
         failed.push_back("fine_rmse");
+    if (!(res.fine_plane_rmse_m <= rc.fine_max_plane_rmse_m))
+        failed.push_back("fine_plane_rmse");
     if (!(res.overlap >= gc.min_overlap_ratio))
         failed.push_back("overlap");
     if (gc.degeneracy_gate_enabled && !(res.eig_ratio >= gc.min_eig_ratio))

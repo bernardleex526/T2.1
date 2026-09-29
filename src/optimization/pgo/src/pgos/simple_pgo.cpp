@@ -230,10 +230,22 @@ void SimplePGO::searchForLoopPairs()
         // (verified with ground truth in test/test_scan_context_yaw.cpp).  Build the world-frame
         // delta that maps the source cloud onto the target cloud:
         //     dT_world = T_w_target * T_target_source_init * T_w_source^-1
-        // with the rotation of T_target_source_init taken from the descriptor and its
-        // translation from the current odometry estimate (a drifted but bounded prior).
+        //
+        // T_target_source_init differs by detector, and that difference is the whole point:
+        //
+        //  * scan_context - the descriptor declared the two keyframes to be THE SAME PLACE, so
+        //    the initial translation is taken to be ZERO: the source is assumed co-located with
+        //    the target and only rotated by the descriptor yaw.  Using the odometry's relative
+        //    translation instead would re-inject exactly the drift the descriptor was able to
+        //    see past (measured: for the true revisit of mid360s_office_loop_01 it is 2.04 m
+        //    wrong, which drove the coarse stage to converge 0.88 m away from the truth and the
+        //    candidate was rejected).  Roll/pitch still come from odometry: they are directly
+        //    observed by the IMU and a revisit does not change them.
+        //  * radius_search - the candidate is only "within loop_search_radius metres", not the
+        //    same place, so the full odometry relative pose is the right prior.  The delta above
+        //    then collapses to exactly identity, i.e. the legacy behaviour, no regression.
         M4D init_guess = M4D::Identity();
-        double prior_yaw_deg = 0.0, init_yaw_deg = 0.0;
+        double prior_yaw_deg = 0.0, init_yaw_deg = 0.0, prior_t_m = 0.0;
         {
             const M3D R_s = last_item.r_global, R_t = target_item.r_global;
             const V3D t_s = last_item.t_global, t_t = target_item.t_global;
@@ -241,17 +253,18 @@ void SimplePGO::searchForLoopPairs()
             const V3D t_ts_odom = R_t.transpose() * (t_s - t_t);
             const Eigen::Vector3d ypr = R_ts_odom.eulerAngles(2, 1, 0); // ZYX
             prior_yaw_deg = ypr(0) * 180.0 / M_PI;
-            // A radius-search candidate carries no yaw information, so it reuses the odometry
-            // yaw; the reconstructed rotation is then R_ts_odom itself and the delta above
-            // collapses to exactly identity, i.e. the legacy behaviour, no regression.
             const double yaw = c.have_yaw ? c.yaw_rad : ypr(0);
             init_yaw_deg = yaw * 180.0 / M_PI;
             const M3D R_ts = (Eigen::AngleAxisd(yaw, V3D::UnitZ()) *
                               Eigen::AngleAxisd(ypr(1), V3D::UnitY()) *
                               Eigen::AngleAxisd(ypr(2), V3D::UnitX())).toRotationMatrix();
+            // Raw LIO separation of the two keyframes (t_local is the un-optimised odometry
+            // pose, so this is immune to whatever the PGO has already done to the graph).
+            prior_t_m = (t_s - t_t).norm();
+            const V3D t_ts = c.have_yaw ? V3D::Zero() : t_ts_odom;
             Eigen::Affine3d T_ws(R_s); T_ws.translation() = t_s;
             Eigen::Affine3d T_wt(R_t); T_wt.translation() = t_t;
-            Eigen::Affine3d T_ts(R_ts); T_ts.translation() = t_ts_odom;
+            Eigen::Affine3d T_ts(R_ts); T_ts.translation() = t_ts;
             init_guess = (T_wt * T_ts * T_ws.inverse()).matrix();
         }
 
@@ -263,20 +276,46 @@ void SimplePGO::searchForLoopPairs()
         m_fe.t_gates_ms += r.ms.gates_ms;
         evaluated++;
 
-        if (r.accepted)
+        // The relative pose the registration measured, expressed in the target keyframe's body
+        // frame.  Computed for EVERY candidate, not only the accepted ones: ||t|| is the most
+        // direct audit of what a candidate claims.  The Scan Context detector asserted that the
+        // two keyframes are the same place, so a genuine revisit must come out near zero (up to
+        // the keyframe spacing), while a candidate that registration moved several metres is a
+        // near passage, not a revisit.
+        LoopPair pair;
+        pair.source_id = cur_idx;
+        pair.target_id = c.idx;
+        pair.score = r.fine_rmse_m; // metres (legacy field, logging only)
         {
-            LoopPair one_pair;
-            one_pair.source_id = cur_idx;
-            one_pair.target_id = c.idx;
-            one_pair.score = r.fine_rmse_m; // metres (legacy field: used for logging only)
             const M3D R_delta = r.fine_transform.block<3, 3>(0, 0);
             const V3D t_delta = r.fine_transform.block<3, 1>(0, 3);
-            M3D r_refined = R_delta * m_key_poses[cur_idx].r_global;
-            V3D t_refined = R_delta * m_key_poses[cur_idx].t_global + t_delta;
-            one_pair.r_offset = target_item.r_global.transpose() * r_refined;
-            one_pair.t_offset = target_item.r_global.transpose() * (t_refined - target_item.t_global);
-            m_cache_pairs.push_back(one_pair);
-            m_history_pairs.emplace_back(one_pair.target_id, one_pair.source_id);
+            const M3D r_refined = R_delta * m_key_poses[cur_idx].r_global;
+            const V3D t_refined = R_delta * m_key_poses[cur_idx].t_global + t_delta;
+            pair.r_offset = target_item.r_global.transpose() * r_refined;
+            pair.t_offset = target_item.r_global.transpose() * (t_refined - target_item.t_global);
+        }
+        const double rel_t = pair.t_offset.norm();
+        // Plausibility gate: how much drift does this candidate ask the graph to remove?
+        const double correction = prior_t_m - rel_t;
+        // Yaw-consistency gate (scan_context only): |descriptor yaw - odometry relative yaw|,
+        // wrapped to [-180, 180].
+        const double dyaw_deg =
+            c.have_yaw ? std::remainder(init_yaw_deg - prior_yaw_deg, 360.0) : 0.0;
+        if (r.accepted && !(correction <= m_config.gate.max_loop_correction_m))
+        {
+            r.accepted = false;
+            r.reject = "correction";
+        }
+        if (r.accepted && c.have_yaw &&
+            !(std::abs(dyaw_deg) <= m_config.gate.max_yaw_disagreement_deg))
+        {
+            r.accepted = false;
+            r.reject = "yaw_disagreement";
+        }
+        if (r.accepted)
+        {
+            m_cache_pairs.push_back(pair);
+            m_history_pairs.emplace_back(pair.target_id, pair.source_id);
             accepted++;
             m_fe.accepted++;
         }
@@ -293,15 +332,17 @@ void SimplePGO::searchForLoopPairs()
             snprintf(decision, sizeof(decision), "REJECT(%s)", r.reject.c_str());
 
         printf("[PGO][gate] kf=%zu cand=%d det=%s sc_dist=%.4f sc_yaw_deg=%.2f prior_yaw_deg=%.2f "
-               "init_yaw_deg=%.2f | coarse conv=%d rmse=%.4fm (max %.3f) | fine conv=%d rmse=%.4fm "
-               "(max %.3f) p2pl=%.4fm | overlap=%.3f@%.2fm (%.3f@%.2fm %.3f@%.2fm) n_corr=%zu/%zu | "
-               "eig=[%.4f %.4f %.4f] ratio=%.5f (min %.5f) norm=%.3e | ms[desc=%.2f query=%.2f "
-               "coarse=%.1f fine=%.1f gates=%.1f] | %s\n",
+               "init_yaw_deg=%.2f dyaw=%.2f prior_t=%.3fm rel_t=%.3fm corr=%.3fm (max %.1f) | coarse conv=%d "
+               "rmse=%.4fm (max %.3f) | fine conv=%d "
+               "rmse=%.4fm (max %.3f) p2pl=%.4fm (max %.3f) inlier=%.4fm | overlap=%.3f@%.2fm "
+               "(%.3f@%.2fm %.3f@%.2fm) n_corr=%zu/%zu | eig=[%.4f %.4f %.4f] ratio=%.5f (min %.5f) "
+               "norm=%.3e | ms[desc=%.2f query=%.2f coarse=%.1f fine=%.1f gates=%.1f] | %s\n",
                cur_idx, c.idx, c.detector, c.sc_dist,
                c.have_yaw ? c.yaw_rad * 180.0 / M_PI : 0.0, prior_yaw_deg, init_yaw_deg,
+               dyaw_deg, prior_t_m, rel_t, correction, m_config.gate.max_loop_correction_m,
                r.coarse_converged ? 1 : 0, r.coarse_rmse_m, m_config.reg.coarse_max_rmse_m,
                r.fine_converged ? 1 : 0, r.fine_rmse_m, m_config.reg.fine_max_rmse_m,
-               r.fine_plane_rmse_m,
+               r.fine_plane_rmse_m, m_config.reg.fine_max_plane_rmse_m, r.inlier_rmse_m,
                r.overlap, m_config.gate.overlap_radius_m,
                r.overlap_2, m_config.gate.overlap_radius_2_m,
                r.overlap_3, m_config.gate.overlap_radius_3_m,
@@ -358,15 +399,26 @@ void SimplePGO::smoothAndUpdate()
         gtsam::noiseModel::Diagonal::shared_ptr loop_base_noise =
             gtsam::noiseModel::Diagonal::Variances(
                 (gtsam::Vector(6) << var_rpy, var_rpy, var_rpy, var_xyz, var_xyz, var_xyz).finished());
-        gtsam::noiseModel::Robust::shared_ptr loop_noise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(m_config.loop_robust_k), loop_base_noise);
+        // loop_robust_k <= 0 DISABLES the robust kernel (plain Gaussian on the loop factor).
+        // NOTE gtsam's Huber::Create throws on a non-positive threshold, so this branch must not
+        // be left to the estimator itself.
+        gtsam::SharedNoiseModel loop_noise = loop_base_noise;
+        if (m_config.loop_robust_k > 0.0)
+            loop_noise = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::Huber::Create(m_config.loop_robust_k),
+                loop_base_noise);
 
         for (LoopPair &pair : m_cache_pairs)
         {
             // pair.score is the FINE-stage RMSE [m] of the accepted pair (it is NOT used as a
             // variance any more; the noise model below is a fixed variance floor).
-            printf("[PGO][loop] id %zu <-> %zu  fine_rmse_m %.4f  var_xyz %.3e var_rpy %.3e huber_k %.2f\n",
-                   pair.source_id, pair.target_id, pair.score, var_xyz, var_rpy, m_config.loop_robust_k);
+            const Eigen::Quaterniond q(pair.r_offset);
+            printf("[PGO][loop] id %zu <-> %zu  fine_rmse_m %.4f  var_xyz %.3e var_rpy %.3e "
+                   "huber_k %.2f  t=[%.4f %.4f %.4f] q=[%.5f %.5f %.5f %.5f]\n",
+                   pair.source_id, pair.target_id, pair.score, var_xyz, var_rpy,
+                   m_config.loop_robust_k,
+                   pair.t_offset.x(), pair.t_offset.y(), pair.t_offset.z(),
+                   q.x(), q.y(), q.z(), q.w());
             m_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(pair.target_id, pair.source_id,
                                                            gtsam::Pose3(gtsam::Rot3(pair.r_offset),
                                                                         gtsam::Point3(pair.t_offset)),

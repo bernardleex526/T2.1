@@ -106,8 +106,23 @@ struct RegistrationConfig
     double fine_voxel_resolution_m = 0.10;
     double fine_max_corr_dist_m = 0.50;
     int fine_max_iterations = 60;
-    double fine_max_rmse_m = 0.10;         // metres (PCL fitness score <= this^2)
-    double normal_search_radius_m = 0.60;  // normal estimation radius at fine resolution
+    // Acceptance residuals, both in metres (PCL's fitness score is a mean SQUARED distance, so
+    // sqrt() of it is the RMS nearest-neighbour distance):
+    //   fine_max_rmse_m       - over ALL source points.  Loose by design, and equivalent in
+    //                           meaning to the legacy loop_score_tresh = 0.15 m^2 (= 0.387 m
+    //                           RMS): source points whose geometry the target submap simply does
+    //                           not contain (different field of view) are expected and would
+    //                           otherwise dominate the mean.  Measured on true co-located scan
+    //                           pairs of the MID-360S office loop it is 0.155-0.40 m, so it
+    //                           cannot discriminate on its own.
+    //   fine_max_plane_rmse_m - point-to-plane RMS over the INLIER correspondences only, i.e.
+    //                           "how far off the surfaces are where the two scans do overlap".
+    //                           This is the discriminating residual; unlike a point-to-point
+    //                           inlier residual it is not bounded by the overlap radius, and
+    //                           unlike the all-points one it ignores the uncovered geometry.
+    double fine_max_rmse_m = 0.35;
+    double fine_max_plane_rmse_m = 0.05;
+    double normal_search_radius_m = 0.30;  // normal estimation radius at fine resolution
     int correspondence_randomness = 10;    // fast_gicp knn for covariance estimation
 };
 
@@ -128,7 +143,27 @@ struct GateConfig
     // registration can slide arbitrarily along it while still converging.  Gate on
     // lambda_min / lambda_max.
     bool degeneracy_gate_enabled = true;
-    double min_eig_ratio = 0.02;   // measured basis: see config/pgo.yaml
+    double min_eig_ratio = 0.003;   // measured basis: see config/pgo.yaml
+    // Plausibility gate on the CORRECTION a candidate demands.  A loop exists to remove drift,
+    // and the drift a platform can have accumulated between two visits is bounded by its own
+    // drift budget.  Measured on this sequence: the raw LIO says the two keyframes are X apart,
+    // registration measures rel_t, and |X - rel_t| is what the graph is being asked to absorb.
+    // A candidate demanding far more correction than the trajectory's own end-of-loop drift
+    // (5.87 m over 134 m here) is far more likely to be a perceptual alias (the same office
+    // corridor repeating every few metres) than a genuine loop, so it is rejected.
+    // Applied to both detectors; for the radius detector it is nearly vacuous, because those
+    // candidates never assert co-location and the registration stays at the odometry prior.
+    double max_loop_correction_m = 2.0;
+    // Yaw-consistency gate, scan-context candidates only (a radius-search candidate has no
+    // descriptor yaw at all, so the gate cannot apply to it).  The descriptor's relative yaw and
+    // the odometry's relative yaw are two INDEPENDENT estimates of the same quantity; they agree
+    // up to the yaw drift accumulated between the two visits, which for an office loop of a few
+    // hundred seconds is a couple of degrees.  A perceptual alias, by contrast, has an arbitrary
+    // relative yaw.  Measured on this sequence: the genuine revisit disagrees by 0.9 deg, the
+    // aliased candidates that the geometric gates admitted disagree by 18-171 deg.  15 deg is
+    // 16x the measured genuine value and 12x below the smallest measured alias.
+    // ASSUMPTION: the odometry's yaw drift between the two visits stays below this threshold.
+    double max_yaw_disagreement_deg = 15.0;
 };
 
 struct StageTiming
@@ -149,6 +184,7 @@ struct RegistrationResult
     bool fine_converged = false;
     double fine_rmse_m = -1.0;       // sqrt(PCL fitness score of the fine stage)    [m]
     double fine_plane_rmse_m = -1.0; // point-to-plane RMSE over the in-radius correspondences [m]
+    double inlier_rmse_m = -1.0;     // point-to-point RMSE over the in-radius correspondences [m]
     size_t n_source = 0;             // points in the fine source cloud after downsampling
     size_t n_corr = 0;               // source points with a target point within overlap_radius_m
     double overlap = -1.0;
