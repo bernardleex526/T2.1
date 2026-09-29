@@ -291,7 +291,7 @@ public:
                 // the one implied by the last ACCEPTED raw candidate (see outlier_gate.h), and
                 // smooth only what is published.
                 const OffsetGateOutcome outcome =
-                    m_gate.update(cand_offset_r, cand_offset_t, current_local_r, current_local_t);
+                    m_gate.update(cand_offset_r, cand_offset_t, current_local_t);
                 m_state.last_offset_r = m_gate.published_r();
                 m_state.last_offset_t = m_gate.published_t();
                 if (outcome.accepted)

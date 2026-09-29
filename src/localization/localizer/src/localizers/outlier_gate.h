@@ -74,9 +74,11 @@ public:
     const OffsetGateConfig &config() const { return m_cfg; }
 
     // cand_*: the map<-odom offset the ICP just produced.
-    // body_*: the current odom<-body pose (from the LIO odometry) the candidate is evaluated at.
-    OffsetGateOutcome update(const M3D &cand_r, const V3D &cand_t,
-                             const M3D &body_r, const V3D &body_t)
+    // body_t: odom-frame position of the sensor (from the LIO odometry) that the candidate is
+    //         evaluated at.  The body ORIENTATION is not needed: the angle is measured between
+    //         the two offsets directly, which is the same angle their body poses differ by
+    //         (angularDistance(cand_r*body_r, raw_r*body_r) == angularDistance(cand_r, raw_r)).
+    OffsetGateOutcome update(const M3D &cand_r, const V3D &cand_t, const V3D &body_t)
     {
         OffsetGateOutcome out;
         if (!m_engaged)

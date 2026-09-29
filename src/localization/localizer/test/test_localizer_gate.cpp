@@ -55,7 +55,7 @@ TEST(OffsetGate, RotationInnovationDoesNotScaleWithLeverArm)
 
         // The gate compares the implied body poses: identical, so the innovation is zero at
         // both distances and the candidate is accepted.
-        const OffsetGateOutcome out = gate.update(cand_r, cand_t, M3D::Identity(), body_t);
+        const OffsetGateOutcome out = gate.update(cand_r, cand_t, body_t);
         EXPECT_TRUE(out.accepted) << "d=" << d;
         EXPECT_LE(out.innovation_m, 1e-12) << "d=" << d;
         EXPECT_NEAR(out.innovation_rad, eps, 1e-9) << "d=" << d;
@@ -66,17 +66,17 @@ TEST(OffsetGate, BodyPoseTranslationInnovationIsGated)
 {
     OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
-    const OffsetGateOutcome first = gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t);
+    const OffsetGateOutcome first = gate.update(M3D::Identity(), V3D::Zero(), body_t);
     EXPECT_TRUE(first.accepted); // not engaged yet: first lock
 
     // 0.02 m of body-pose motion: accepted.
-    const OffsetGateOutcome ok = gate.update(M3D::Identity(), V3D(0.02, 0.0, 0.0), M3D::Identity(), body_t);
+    const OffsetGateOutcome ok = gate.update(M3D::Identity(), V3D(0.02, 0.0, 0.0), body_t);
     EXPECT_TRUE(ok.accepted);
     EXPECT_NEAR(ok.innovation_m, 0.02, 1e-12);
 
     // 0.5 m at once: rejected, and the published (smoothed) transform does not move.
     const V3D published_before = gate.published_t();
-    const OffsetGateOutcome bad = gate.update(M3D::Identity(), V3D(0.52, 0.0, 0.0), M3D::Identity(), body_t);
+    const OffsetGateOutcome bad = gate.update(M3D::Identity(), V3D(0.52, 0.0, 0.0), body_t);
     EXPECT_FALSE(bad.accepted);
     EXPECT_NEAR(bad.innovation_m, 0.5, 1e-12);
     EXPECT_LT((gate.published_t() - published_before).norm(), 1e-12);
@@ -90,12 +90,12 @@ TEST(OffsetGate, SteadyDriftStaysAcceptedAgainstTheLastRawCandidate)
 {
     OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
-    gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t); // first lock
+    gate.update(M3D::Identity(), V3D::Zero(), body_t); // first lock
 
     for (int i = 1; i <= 50; ++i)
     {
         const V3D t(0.02 * i, 0.0, 0.0); // 2 cm per update, 1 m total
-        const OffsetGateOutcome out = gate.update(M3D::Identity(), t, M3D::Identity(), body_t);
+        const OffsetGateOutcome out = gate.update(M3D::Identity(), t, body_t);
         EXPECT_TRUE(out.accepted) << "i=" << i;
         // Against the raw reference the innovation is one step, not the accumulated lag an EMA
         // reference would show (which is ~0.18 m here and would reject from i=3 on).
@@ -113,12 +113,12 @@ TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
 {
     OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
-    gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t); // first lock
+    gate.update(M3D::Identity(), V3D::Zero(), body_t); // first lock
 
     const V3D jump(1.0, 0.0, 0.0); // 1 m away from the reference: rejected
     for (int i = 1; i <= 2; ++i)
     {
-        const OffsetGateOutcome out = gate.update(M3D::Identity(), jump, M3D::Identity(), body_t);
+        const OffsetGateOutcome out = gate.update(M3D::Identity(), jump, body_t);
         EXPECT_FALSE(out.accepted) << "i=" << i;
         EXPECT_FALSE(out.lost) << "i=" << i;
         EXPECT_EQ(gate.consecutiveRejects(), i);
@@ -126,14 +126,14 @@ TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
 
     // The third rejection crosses max_consecutive_rejects: report lost and re-seed on the
     // candidate (which is also published, so the transform is not frozen on a stale value).
-    const OffsetGateOutcome lost = gate.update(M3D::Identity(), jump, M3D::Identity(), body_t);
+    const OffsetGateOutcome lost = gate.update(M3D::Identity(), jump, body_t);
     EXPECT_TRUE(lost.lost);
     EXPECT_EQ(lost.consecutive_rejects, 0); // reset by the re-seed
     EXPECT_LT((gate.published_t() - jump).norm(), 1e-12);
 
     // Tracking resumes from the new reference instead of rejecting everything forever.
     const OffsetGateOutcome resumed = gate.update(M3D::Identity(), jump + V3D(0.01, 0.0, 0.0),
-                                                  M3D::Identity(), body_t);
+                                                  body_t);
     EXPECT_TRUE(resumed.accepted);
 }
 
@@ -141,13 +141,13 @@ TEST(OffsetGate, ResetRelocksOnALargeJump)
 {
     OffsetOutlierGate gate(testConfig());
     const V3D body_t(5.0, 0.0, 0.0);
-    gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t);
+    gate.update(M3D::Identity(), V3D::Zero(), body_t);
 
     // A relocalize request resets the gate: a candidate near the NEW reference is accepted
     // (1 cm), where the same candidate is ~10 m from the old reference and would otherwise be
     // rejected forever.
     gate.reset(rotZ(1.0), V3D(10.0, 10.0, 0.0));
-    const OffsetGateOutcome out = gate.update(rotZ(1.0), V3D(10.0, 10.01, 0.0), M3D::Identity(), body_t);
+    const OffsetGateOutcome out = gate.update(rotZ(1.0), V3D(10.0, 10.01, 0.0), body_t);
     EXPECT_TRUE(out.accepted);
     EXPECT_NEAR(out.innovation_m, 0.01, 1e-12);
 }
