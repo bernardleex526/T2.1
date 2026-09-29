@@ -279,6 +279,10 @@ public:
                     std::lock_guard<std::mutex> lock(m_state.service_mutex);
                     m_state.localize_success = true;
                     m_state.service_received = false;
+                    RCLCPP_INFO(this->get_logger(),
+                                "localization lock adopted at t=[%.3f %.3f %.3f]",
+                                m_gate.published_t().x(), m_gate.published_t().y(),
+                                m_gate.published_t().z());
                 }
             }
             else

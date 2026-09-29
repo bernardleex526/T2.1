@@ -61,9 +61,7 @@ bool IMUProcessor::initialize(SyncPackage &package)
         // measure the deviation over THAT window (not the whole cache, whose tail may be
         // seconds of motion in waited-out mode) with the configured threshold (review N1).
         const double g_meas = acc_mean.norm();
-        const bool window_static = plan.is_static || !plan.use_static_window;
-        if (g_meas > 8.5 && g_meas < 10.5 && window_static &&
-            plan.acc_dev < m_config.imu_init_static_acc_dev)
+        if (g_meas > 8.5 && g_meas < 10.5 && plan.acc_dev < m_config.imu_init_static_acc_dev)
             State::gravity = g_meas;
         m_kf->x().r_wi = (Eigen::Quaterniond::FromTwoVectors((-acc_mean).normalized(), V3D(0.0, 0.0, -1.0)).matrix());
         m_kf->x().initGravityDir(V3D(0, 0, -1.0));
