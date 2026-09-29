@@ -11,7 +11,7 @@ scan_resolution: 0.15
 map_resolution: 0.3
 
 cube_len: 1000
-det_range: 40
+det_range: 100
 move_thresh: 1.5
 
 na: 0.06
