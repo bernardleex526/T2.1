@@ -18,6 +18,7 @@
 
 #include "localizers/commons.h"
 #include "localizers/icp_localizer.h"
+#include "localizers/outlier_gate.h"
 #include "interface/srv/relocalize.hpp"
 #include "interface/srv/is_valid.hpp"
 #include <yaml-cpp/yaml.h>
@@ -32,6 +33,7 @@ struct NodeConfig
     std::string local_frame = "lidar";
     double update_hz = 1.0;
     std::string pcd_path = ""; // PCD路径
+    OffsetGateConfig gate;     // physical-consistency gate of the ICP updates
 };
 
 struct NodeState
@@ -60,6 +62,7 @@ public:
         RCLCPP_INFO(this->get_logger(), "Localizer Node Started");
         m_state.last_send_tf_time = this->now();
         loadParameters();
+        m_gate = OffsetOutlierGate(m_config.gate);
         rclcpp::QoS qos = rclcpp::QoS(10);
         m_cloud_sub.subscribe(this, m_config.cloud_topic, qos.get_rmw_qos_profile());
         m_odom_sub.subscribe(this, m_config.odom_topic, qos.get_rmw_qos_profile());
@@ -128,6 +131,24 @@ public:
         m_localizer_config.refine_map_resolution = config["refine_map_resolution"].as<double>();
         m_localizer_config.refine_max_iteration = config["refine_max_iteration"].as<int>();
         m_localizer_config.refine_score_thresh = config["refine_score_thresh"].as<double>();
+
+        // Optional: correspondence radii [m] and inlier-ratio floors of the two ICP stages,
+        // and the physical-consistency gate of the accepted updates.  Absent keys keep the
+        // defaults in icp_localizer.h / outlier_gate.h, so existing configs stay valid.
+        if (config["rough_max_corr_dist"]) m_localizer_config.rough_max_corr_dist = config["rough_max_corr_dist"].as<double>();
+        if (config["refine_max_corr_dist"]) m_localizer_config.refine_max_corr_dist = config["refine_max_corr_dist"].as<double>();
+        if (config["rough_min_inlier_ratio"]) m_localizer_config.rough_min_inlier_ratio = config["rough_min_inlier_ratio"].as<double>();
+        if (config["refine_min_inlier_ratio"]) m_localizer_config.refine_min_inlier_ratio = config["refine_min_inlier_ratio"].as<double>();
+        if (config["gate_max_translation_m"]) m_config.gate.max_translation_m = config["gate_max_translation_m"].as<double>();
+        if (config["gate_max_angle_rad"]) m_config.gate.max_angle_rad = config["gate_max_angle_rad"].as<double>();
+        if (config["gate_max_consecutive_rejects"]) m_config.gate.max_consecutive_rejects = config["gate_max_consecutive_rejects"].as<int>();
+        if (config["gate_ema_alpha"]) m_config.gate.ema_alpha = config["gate_ema_alpha"].as<double>();
+        RCLCPP_INFO(this->get_logger(),
+                    "correspondence: rough %.2fm/%.2f refine %.2fm/%.2f | gate: %.3fm %.3frad %d rejects alpha %.2f",
+                    m_localizer_config.rough_max_corr_dist, m_localizer_config.rough_min_inlier_ratio,
+                    m_localizer_config.refine_max_corr_dist, m_localizer_config.refine_min_inlier_ratio,
+                    m_config.gate.max_translation_m, m_config.gate.max_angle_rad,
+                    m_config.gate.max_consecutive_rejects, m_config.gate.ema_alpha);
 
         RCLCPP_INFO(this->get_logger(), "Using PCD path: %s", m_config.pcd_path.c_str());
 
@@ -249,8 +270,10 @@ public:
 
             if (!m_state.localize_success)
             {
-                m_state.last_offset_r = cand_offset_r;
-                m_state.last_offset_t = cand_offset_t;
+                // First lock (or after a relocalize request): adopt unconditionally.
+                m_gate.reset(cand_offset_r, cand_offset_t);
+                m_state.last_offset_r = m_gate.published_r();
+                m_state.last_offset_t = m_gate.published_t();
                 if (m_state.service_received)
                 {
                     std::lock_guard<std::mutex> lock(m_state.service_mutex);
@@ -260,22 +283,34 @@ public:
             }
             else
             {
-                double dt = (cand_offset_t - m_state.last_offset_t).norm();
-                Eigen::Quaterniond q_cand(cand_offset_r);
-                Eigen::Quaterniond q_prev(m_state.last_offset_r);
-                double d_angle = q_prev.angularDistance(q_cand);
-
-                // Physical consistency gate: reject jumps > 4cm or > 1.7 deg
-                if (dt <= 0.04 && d_angle <= 0.03)
+                // Physical-consistency gate: compare the body pose this candidate implies with
+                // the one implied by the last ACCEPTED raw candidate (see outlier_gate.h), and
+                // smooth only what is published.
+                const OffsetGateOutcome outcome =
+                    m_gate.update(cand_offset_r, cand_offset_t, current_local_r, current_local_t);
+                m_state.last_offset_r = m_gate.published_r();
+                m_state.last_offset_t = m_gate.published_t();
+                if (outcome.accepted)
                 {
-                    const double alpha = 0.10;
-                    m_state.last_offset_t = (1.0 - alpha) * m_state.last_offset_t + alpha * cand_offset_t;
-                    m_state.last_offset_r = q_prev.slerp(alpha, q_cand).toRotationMatrix();
+                    RCLCPP_DEBUG(this->get_logger(), "ICP update accepted: innovation %.4fm %.4frad",
+                                 outcome.innovation_m, outcome.innovation_rad);
                 }
                 else
                 {
                     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                        "ICP update rejected by outlier gate: dt=%.3fm d_angle=%.3frad", dt, d_angle);
+                        "ICP update rejected by outlier gate: innovation=%.3fm %.3frad (%d consecutive)",
+                        outcome.innovation_m, outcome.innovation_rad, outcome.consecutive_rejects);
+                }
+                if (outcome.lost)
+                {
+                    // Bounded recovery: the gate re-seeded on this candidate so tracking can
+                    // resume, but the lock is no longer trustworthy - report INVALID (through
+                    // relocalize_check) instead of staying silently valid while dead reckoning.
+                    RCLCPP_ERROR(this->get_logger(),
+                        "outlier gate: %d consecutive ICP updates rejected; declaring the localization INVALID and re-seeding on the current candidate (call /relocalize to re-lock)",
+                        m_config.gate.max_consecutive_rejects);
+                    std::lock_guard<std::mutex> lock(m_state.service_mutex);
+                    m_state.localize_success = false;
                 }
             }
         }
@@ -398,6 +433,7 @@ private:
 
     ICPConfig m_localizer_config;
     std::shared_ptr<ICPLocalizer> m_localizer;
+    OffsetOutlierGate m_gate;
     message_filters::Subscriber<sensor_msgs::msg::PointCloud2> m_cloud_sub;
     message_filters::Subscriber<nav_msgs::msg::Odometry> m_odom_sub;
     rclcpp::TimerBase::SharedPtr m_timer;

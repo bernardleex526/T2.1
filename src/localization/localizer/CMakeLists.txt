@@ -57,6 +57,14 @@ install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})
 
 
 if(BUILD_TESTING)
+  # Deterministic tests of the ICP outlier gate (B2: body-pose innovation, raw reference,
+  # bounded recovery) and of the fitness/inlier-ratio measurement (N3).
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_localizer_gate test/test_localizer_gate.cpp)
+  target_include_directories(test_localizer_gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_target_dependencies(test_localizer_gate pcl_conversions)
+  target_link_libraries(test_localizer_gate ${PCL_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

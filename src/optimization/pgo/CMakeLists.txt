@@ -83,6 +83,13 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_scan_context_yaw cv_bridge pcl_conversions sensor_msgs)
   target_link_libraries(test_scan_context_yaw ${PCL_LIBRARIES})
 
+  # Pins the loop-gate geometry conventions (yaw extraction, descriptor-yaw seed, vector
+  # comparison of relative translations) that the integration review found broken.
+  ament_add_gtest(test_gate_math test/test_gate_math.cpp)
+  target_include_directories(test_gate_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_target_dependencies(test_gate_math pcl_conversions)
+  target_link_libraries(test_gate_math ${PCL_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

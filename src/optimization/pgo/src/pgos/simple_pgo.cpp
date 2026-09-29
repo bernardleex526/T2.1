@@ -1,4 +1,5 @@
 #include "simple_pgo.h"
+#include "gate_math.h"
 #include <cstdio>
 #include <memory>
 #include <unordered_set>
@@ -264,6 +265,7 @@ void SimplePGO::searchForLoopPairs()
         //    then collapses to exactly identity, i.e. the legacy behaviour, no regression.
         M3D R_ts_odom;
         V3D t_ts_odom;
+        double yaw_odom = 0.0;
         double prior_yaw_deg = 0.0, init_yaw_deg = 0.0, prior_t_m = 0.0;
         M4D seed_guesses[2];
         const char *seed_labels[2];
@@ -273,9 +275,14 @@ void SimplePGO::searchForLoopPairs()
             const V3D t_s = last_item.t_global, t_t = target_item.t_global;
             R_ts_odom = R_t.transpose() * R_s;
             t_ts_odom = R_t.transpose() * (t_s - t_t);
-            const Eigen::Vector3d ypr = R_ts_odom.eulerAngles(2, 1, 0); // ZYX
-            prior_yaw_deg = ypr(0) * 180.0 / M_PI;
-            const double yaw = c.have_yaw ? c.yaw_rad : ypr(0);
+            // B1: the yaw is taken with yawZ (atan2 of the rotation's first column), NOT with
+            // eulerAngles(2,1,0): Eigen folds that first angle into a half range, so a -1 deg
+            // yaw reads back as +179 deg and a 180 deg flip can read back unchanged.  The
+            // comparison below would then reject the most common revisit geometry (estimates
+            // straddling 0 deg) and pass the flipped alias the gate exists to catch.
+            yaw_odom = pgo_loop::yawZ(R_ts_odom);
+            prior_yaw_deg = yaw_odom * 180.0 / M_PI;
+            const double yaw = c.have_yaw ? c.yaw_rad : yaw_odom;
             init_yaw_deg = yaw * 180.0 / M_PI;
             prior_t_m = (t_s - t_t).norm();
             Eigen::Affine3d T_ws(R_s); T_ws.translation() = t_s;
@@ -284,9 +291,9 @@ void SimplePGO::searchForLoopPairs()
             const M4D odom_prior_guess = (T_wt * T_ts_odom * T_ws.inverse()).matrix();
             if (c.have_yaw)
             {
-                const M3D R_ts = (Eigen::AngleAxisd(yaw, V3D::UnitZ()) *
-                                  Eigen::AngleAxisd(ypr(1), V3D::UnitY()) *
-                                  Eigen::AngleAxisd(ypr(2), V3D::UnitX())).toRotationMatrix();
+                // Descriptor yaw in place of the odometry relative yaw; the odometry's
+                // roll/pitch are preserved exactly (no Euler round trip, no branch choice).
+                const M3D R_ts = pgo_loop::withYawAboutZ(R_ts_odom, yaw);
                 Eigen::Affine3d T_ts(R_ts); T_ts.translation() = V3D::Zero();
                 seed_guesses[0] = (T_wt * T_ts * T_ws.inverse()).matrix();
                 seed_guesses[1] = odom_prior_guess;
@@ -338,11 +345,15 @@ void SimplePGO::searchForLoopPairs()
             a.r_offset = target_item.r_global.transpose() * r_refined;
             a.t_offset = target_item.r_global.transpose() * (t_refined - target_item.t_global);
             a.rel_t = a.t_offset.norm();
-            a.corr = prior_t_m - a.rel_t;
+            // N4: the correction is the VECTOR difference between the odometry's relative
+            // translation and the measured one, both in the target keyframe's body frame.
+            // prior_t_m - a.rel_t would score a purely lateral correction (same distance from
+            // the target, different direction) as an odometry no-op.
+            a.corr = pgo_loop::correctionMagnitudeM(t_ts_odom, a.t_offset);
             // Measured relative yaw of the FINAL transform vs the odometry's relative yaw
-            // (independent estimates of the same rotation; see GateConfig comment).
-            const Eigen::Vector3d ypr_m = a.r_offset.eulerAngles(2, 1, 0);
-            a.dyaw_meas_deg = std::remainder(ypr_m(0) * 180.0 / M_PI - prior_yaw_deg, 360.0);
+            // (independent estimates of the same rotation; see GateConfig comment).  Both
+            // yaws come from yawZ (B1) and the difference is wrapped to (-180, 180].
+            a.dyaw_meas_deg = pgo_loop::yawDiffDeg(pgo_loop::yawZ(a.r_offset), yaw_odom);
 
             std::string fails = a.res.reject; // coarse/fine rmse, plane rmse, overlap, eig
             if (is_scan_context && !(a.rel_t <= m_config.gate.max_revisit_rel_t_m))
@@ -351,16 +362,17 @@ void SimplePGO::searchForLoopPairs()
                 !(std::abs(a.dyaw_meas_deg) <= m_config.gate.max_yaw_disagreement_deg))
                 fails += fails.empty() ? "yaw_disagreement" : ",yaw_disagreement";
             // Correction plausibility: bound grows with the travelled path between the pair.
-            if (std::abs(a.corr) > corr_allowance)
+            if (a.corr > corr_allowance)
                 fails += fails.empty() ? "correction" : ",correction";
             // The odometry-prior seed may only claim a loop when registration measurably
             // pulled the two clouds together (see GateConfig::min_odo_correction_m);
             // otherwise the factor would just repeat the odometry constraint.
             const bool is_odo_prior_seed = !is_scan_context || si == 1;
-            // Correction plausibility, SYMMETRIC (STEP 4): a stretch is as implausible as a
-            // shrink, and any candidate whose |correction| is under min_odo_correction_m is
-            // an odometry no-op regardless of which seed produced it.
-            if (!(std::abs(a.corr) >= m_config.gate.min_odo_correction_m))
+            // Correction plausibility (STEP 4): any candidate whose correction magnitude is
+            // under min_odo_correction_m is an odometry no-op regardless of which seed
+            // produced it.  a.corr is a magnitude (>= 0), so the bound is symmetric by
+            // construction: a stretch is as implausible as a shrink.
+            if (!(a.corr >= m_config.gate.min_odo_correction_m))
                 fails += fails.empty() ? "odo_no_correction" : ",odo_no_correction";
             // z plausibility of the measured relative translation (see
             // GateConfig::max_loop_z_offset_m).
@@ -376,8 +388,12 @@ void SimplePGO::searchForLoopPairs()
                                A.res.overlap >= m_config.gate.min_overlap_ratio;
             const bool b_inf = B.res.fine_converged &&
                                B.res.overlap >= m_config.gate.min_overlap_ratio;
+            // N4: the seeds must have measured the same relative translation VECTOR, not two
+            // translations of the same length (mirror-image minima at equal distance used to
+            // pass).
             if (a_inf && b_inf &&
-                !(std::abs(A.rel_t - B.rel_t) <= m_config.gate.cross_seed_max_m))
+                !(pgo_loop::crossSeedDisagreementM(A.t_offset, B.t_offset) <=
+                  m_config.gate.cross_seed_max_m))
             {
                 audits[0].fails += (audits[0].fails.empty() ? "" : ",") +
                                    std::string("seed_disagreement");

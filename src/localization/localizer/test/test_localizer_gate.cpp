@@ -1,0 +1,220 @@
+// Deterministic regression tests for the two localizer defects the integration review found:
+//
+//   B2 - the physical-consistency gate of the accepted ICP updates.  Pinned here: the
+//        innovation is measured on the BODY POSE (no lever-arm growth with distance from the
+//        odom origin), the reference is the last ACCEPTED RAW candidate (not the published
+//        EMA, which made steady drift look like a violation and turned the gate absorbing),
+//        and rejection is bounded - after N consecutive rejects the gate reports `lost` and
+//        re-seeds instead of staying silently "valid" forever.
+//   N3 - the fitness/inlier measurement of the scan against the map (PCL's
+//        getFitnessScore(max_range) takes a SQUARED distance and averages over the in-range
+//        subset only, so a half-matching scan scores like a full one).
+#include <gtest/gtest.h>
+
+#include "localizers/fitness.h"
+#include "localizers/outlier_gate.h"
+
+#include <cmath>
+
+namespace
+{
+M3D rotZ(double rad) { return Eigen::AngleAxisd(rad, V3D::UnitZ()).toRotationMatrix(); }
+
+OffsetGateConfig testConfig()
+{
+    OffsetGateConfig cfg;
+    cfg.max_translation_m = 0.04;
+    cfg.max_angle_rad = 0.03;
+    cfg.max_consecutive_rejects = 3;
+    cfg.ema_alpha = 0.10;
+    return cfg;
+}
+} // namespace
+
+// ---------------------------------------------------------------------------
+// B2: the innovation must not grow with the distance from the odom origin.
+// ---------------------------------------------------------------------------
+TEST(OffsetGate, RotationInnovationDoesNotScaleWithLeverArm)
+{
+    for (const double d : {1.0, 40.0})
+    {
+        const OffsetOutlierGate gate(testConfig());
+        const M3D raw_r = M3D::Identity();
+        const V3D raw_t = V3D::Zero();
+        const V3D body_t(d, 0.0, 0.0);
+
+        // Raw: the transform is the identity offset, i.e. the body pose is the odometry pose.
+        // Candidate: the SAME body pose, but its map<-odom offset carries a 1 mrad rotation
+        // error - which shifts the offset translation by ~d * 1 mrad (0.04 m at 40 m, half the
+        // gate, purely from the lever arm).
+        const double eps = 1e-3;
+        const M3D cand_r = rotZ(eps);
+        const V3D cand_t = body_t - cand_r * body_t;
+        EXPECT_NEAR((cand_t - raw_t).norm(), eps * d, 1e-3); // what the old metric measured
+
+        // The gate compares the implied body poses: identical, so the innovation is zero at
+        // both distances and the candidate is accepted.
+        const OffsetGateOutcome out = gate.update(cand_r, cand_t, M3D::Identity(), body_t);
+        EXPECT_TRUE(out.accepted) << "d=" << d;
+        EXPECT_LE(out.innovation_m, 1e-12) << "d=" << d;
+        EXPECT_NEAR(out.innovation_rad, eps, 1e-9) << "d=" << d;
+    }
+}
+
+TEST(OffsetGate, BodyPoseTranslationInnovationIsGated)
+{
+    const OffsetOutlierGate gate(testConfig());
+    const V3D body_t(5.0, 0.0, 0.0);
+    const OffsetGateOutcome first = gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t);
+    EXPECT_TRUE(first.accepted); // not engaged yet: first lock
+
+    // 0.02 m of body-pose motion: accepted.
+    const OffsetGateOutcome ok = gate.update(M3D::Identity(), V3D(0.02, 0.0, 0.0), M3D::Identity(), body_t);
+    EXPECT_TRUE(ok.accepted);
+    EXPECT_NEAR(ok.innovation_m, 0.02, 1e-12);
+
+    // 0.5 m at once: rejected, and the published (smoothed) transform does not move.
+    const V3D published_before = gate.published_t();
+    const OffsetGateOutcome bad = gate.update(M3D::Identity(), V3D(0.52, 0.0, 0.0), M3D::Identity(), body_t);
+    EXPECT_FALSE(bad.accepted);
+    EXPECT_NEAR(bad.innovation_m, 0.5, 1e-12);
+    EXPECT_LT((gate.published_t() - published_before).norm(), 1e-12);
+    EXPECT_EQ(bad.consecutive_rejects, 1);
+}
+
+// ---------------------------------------------------------------------------
+// B2: a steady drift must not be turned into a rejection loop by an EMA reference.
+// ---------------------------------------------------------------------------
+TEST(OffsetGate, SteadyDriftStaysAcceptedAgainstTheLastRawCandidate)
+{
+    const OffsetOutlierGate gate(testConfig());
+    const V3D body_t(5.0, 0.0, 0.0);
+    gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t); // first lock
+
+    for (int i = 1; i <= 50; ++i)
+    {
+        const V3D t(0.02 * i, 0.0, 0.0); // 2 cm per update, 1 m total
+        const OffsetGateOutcome out = gate.update(M3D::Identity(), t, M3D::Identity(), body_t);
+        EXPECT_TRUE(out.accepted) << "i=" << i;
+        // Against the raw reference the innovation is one step, not the accumulated lag an EMA
+        // reference would show (which is ~0.18 m here and would reject from i=3 on).
+        EXPECT_NEAR(out.innovation_m, 0.02, 1e-12) << "i=" << i;
+        EXPECT_EQ(out.consecutive_rejects, 0) << "i=" << i;
+    }
+    EXPECT_GT(gate.published_t().x(), 0.0);
+    EXPECT_LT(gate.published_t().x(), 1.0); // the published transform lags the raw one
+}
+
+// ---------------------------------------------------------------------------
+// B2: bounded recovery instead of an absorbing gate.
+// ---------------------------------------------------------------------------
+TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
+{
+    const OffsetOutlierGate gate(testConfig());
+    const V3D body_t(5.0, 0.0, 0.0);
+    gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t); // first lock
+
+    const V3D jump(1.0, 0.0, 0.0); // 1 m away from the reference: rejected
+    for (int i = 1; i <= 2; ++i)
+    {
+        const OffsetGateOutcome out = gate.update(M3D::Identity(), jump, M3D::Identity(), body_t);
+        EXPECT_FALSE(out.accepted) << "i=" << i;
+        EXPECT_FALSE(out.lost) << "i=" << i;
+        EXPECT_EQ(gate.consecutiveRejects(), i);
+    }
+
+    // The third rejection crosses max_consecutive_rejects: report lost and re-seed on the
+    // candidate (which is also published, so the transform is not frozen on a stale value).
+    const OffsetGateOutcome lost = gate.update(M3D::Identity(), jump, M3D::Identity(), body_t);
+    EXPECT_TRUE(lost.lost);
+    EXPECT_EQ(lost.consecutive_rejects, 0); // reset by the re-seed
+    EXPECT_LT((gate.published_t() - jump).norm(), 1e-12);
+
+    // Tracking resumes from the new reference instead of rejecting everything forever.
+    const OffsetGateOutcome resumed = gate.update(M3D::Identity(), jump + V3D(0.01, 0.0, 0.0),
+                                                  M3D::Identity(), body_t);
+    EXPECT_TRUE(resumed.accepted);
+}
+
+TEST(OffsetGate, ResetRelocksOnALargeJump)
+{
+    const OffsetOutlierGate gate(testConfig());
+    const V3D body_t(5.0, 0.0, 0.0);
+    gate.update(M3D::Identity(), V3D::Zero(), M3D::Identity(), body_t);
+
+    // A relocalize request resets the gate: the next candidate is adopted unconditionally.
+    gate.reset(rotZ(1.0), V3D(10.0, 10.0, 0.0));
+    const OffsetGateOutcome out = gate.update(rotZ(1.0), V3D(10.0, 10.5, 0.0), M3D::Identity(), body_t);
+    EXPECT_TRUE(out.accepted);
+}
+
+// ---------------------------------------------------------------------------
+// N3: fitness + inlier ratio of the scan against the map.
+// ---------------------------------------------------------------------------
+namespace
+{
+CloudType::Ptr grid(double side, double spacing, double dx, double dy, int n_side, int first, int last)
+{
+    CloudType::Ptr c(new CloudType);
+    for (int i = 0; i < n_side * n_side; ++i)
+    {
+        if (i < first || i >= last)
+            continue;
+        PointType p;
+        p.x = static_cast<float>((i % n_side) * spacing + dx);
+        p.y = static_cast<float>((i / n_side) * spacing + dy);
+        p.z = static_cast<float>(side);
+        p.intensity = 1.0f;
+        c->push_back(p);
+    }
+    return c;
+}
+} // namespace
+
+TEST(FitnessAndInliers, PerfectMatchScoresZeroWithFullOverlap)
+{
+    CloudType::Ptr tgt = grid(0.0, 0.1, 0.0, 0.0, 20, 0, 400);
+    CloudType::Ptr src = grid(0.0, 0.1, 0.0, 0.0, 20, 0, 400);
+    pcl::KdTreeFLANN<PointType> tree;
+    tree.setInputCloud(tgt);
+    double score = -1.0, ratio = -1.0;
+    ASSERT_TRUE(fitnessAndInliers(tree, src, 0.35, &score, &ratio));
+    EXPECT_NEAR(score, 0.0, 1e-12);
+    EXPECT_NEAR(ratio, 1.0, 1e-12);
+}
+
+TEST(FitnessAndInliers, PartialMatchIsExposedByTheInlierRatio)
+{
+    CloudType::Ptr tgt = grid(0.0, 0.1, 0.0, 0.0, 20, 0, 400);
+    // Half the scan is the mapped room, half is 5 m away (unmapped geometry / a different
+    // place).  PCL's getFitnessScore(0.35) would average over the matching half only and
+    // report a perfect score; the ratio exposes that only half the scan matched.
+    CloudType::Ptr src = grid(0.0, 0.1, 0.0, 0.0, 20, 0, 400);
+    for (int i = 200; i < 400; ++i)
+        src->points[i].x += 5.0f;
+
+    pcl::KdTreeFLANN<PointType> tree;
+    tree.setInputCloud(tgt);
+    double score = -1.0, ratio = -1.0;
+    ASSERT_TRUE(fitnessAndInliers(tree, src, 0.35, &score, &ratio));
+    EXPECT_NEAR(score, 0.0, 1e-12); // the matched half is exact
+    EXPECT_NEAR(ratio, 0.5, 1e-12); // ... but only half of the scan is there
+    EXPECT_LT(ratio, 0.9);
+}
+
+TEST(FitnessAndInliers, ShiftedScanDropsOutOfTheRadius)
+{
+    CloudType::Ptr tgt = grid(0.0, 0.1, 0.0, 0.0, 20, 0, 400);
+    CloudType::Ptr src = grid(0.0, 0.1, 0.5, 0.0, 20, 0, 400); // 0.5 m off in x
+    pcl::KdTreeFLANN<PointType> tree;
+    tree.setInputCloud(tgt);
+    double score = -1.0, ratio = -1.0;
+    ASSERT_TRUE(fitnessAndInliers(tree, src, 0.35, &score, &ratio));
+    EXPECT_NEAR(ratio, 0.0, 1e-12);
+    EXPECT_GT(score, 4.0); // huge, so the score gate rejects it too
+
+    // Inside a 0.6 m radius the same shift is a full, if poor, match.
+    ASSERT_TRUE(fitnessAndInliers(tree, src, 0.6, &score, &ratio));
+    EXPECT_NEAR(ratio, 1.0, 1e-12);
+    EXPECT_NEAR(score, 0.25, 1e-9);
+}

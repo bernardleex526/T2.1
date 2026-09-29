@@ -154,7 +154,9 @@ struct GateConfig
     // Plausibility gate on the CORRECTION a candidate demands.  A loop exists to remove drift,
     // and the drift a platform can have accumulated between two visits is bounded by its own
     // drift budget.  Measured on this sequence: the raw LIO says the two keyframes are X apart,
-    // registration measures rel_t, and |X - rel_t| is what the graph is being asked to absorb.
+    // registration measures a relative translation, and the applied value is the MAGNITUDE OF
+    // THE VECTOR DIFFERENCE between the two (see correctionMagnitudeM) - a correction purely
+    // lateral to the odometry separation counts like one along it.
     // A candidate demanding far more correction than the trajectory's own end-of-loop drift
     // (5.87 m over 134 m here) is far more likely to be a perceptual alias (the same office
     // corridor repeating every few metres) than a genuine loop, so it is rejected.
@@ -189,9 +191,10 @@ struct GateConfig
     // along repeating corridor geometry until it agreed with the odometry separation) is a
     // FALSE loop whose factor happens to coincide with odometry; reject it explicitly.
     double max_revisit_rel_t_m = 4.0;
-    // STEP 3: minimum measured CORRECTION (in absolute value) for ANY accepted loop, from
-    // either seed.  A candidate whose registration result agrees with the odometry to
-    // within this bound is an odometry NO-OP: the factor would only re-enforce what
+    // STEP 3: minimum measured CORRECTION (the magnitude of the vector difference between the
+    // odometry's relative translation and the measured one, in the target body frame) for ANY
+    // accepted loop, from either seed.  A candidate whose registration result agrees with the
+    // odometry to within this bound is an odometry NO-OP: the factor would only re-enforce what
     // odometry already says, but at an ICP measurement error far above the loop's 1 cm
     // noise model, and enforcing that error measurably degrades the graph (measured on
     // tiers_indoor_office2_mid360, run loop-t2: six accepted no-op corrections of 0.0-0.27
@@ -203,8 +206,10 @@ struct GateConfig
     // where the revisit is: co-located + descriptor yaw, and the odometry relative pose.
     // When BOTH registrations converge with corroborating overlap, a genuine revisit must
     // measure the SAME relative translation from both (the surfaces attract to one pose);
-    // a disagreement means at least one of them is a false minimum and neither can be
-    // trusted (measured on mid360s_office_loop_01, run loop-b2: kf364<->kf77 - co-located
+    // the comparison is the VECTOR distance between the two measured relative translations
+    // (see crossSeedDisagreementM), so two mirror-image minima at the same distance from the
+    // target do not count as agreement.  A disagreement means at least one of them is a false
+    // minimum and neither can be trusted (measured on mid360s_office_loop_01, run loop-b2: kf364<->kf77 - co-located
     // seed converges to rel_t 4.49 m, odometry-prior seed to 2.68 m, 1.81 m apart; the
     // odometry-prior seed "measured a 2.17 m correction" that the other hypothesis
     // contradicts).  Applied only when both seeds are informative (fine converged AND
@@ -221,9 +226,10 @@ struct GateConfig
     // trajectory and WORSENED the map thickness from 0.0109 to 0.0163 m mean).  0.5 m is
     // ~2x the sequence's whole-loop z drift.  Set from your platform's z-drift behaviour.
     double max_loop_z_offset_m = 0.5;
-    // Yaw-consistency gate.  The MEASURED relative yaw of the accepted registration (the
-    // final fine-stage rotation about Z, expressed in the target keyframe's body frame) and
-    // the odometry's relative yaw are two independent estimates of the same quantity; they
+    // Yaw-consistency gate.  The MEASURED relative yaw of the accepted registration (yaw about
+    // Z of the final fine-stage rotation, expressed in the target keyframe's body frame, taken
+    // with yawZ - see gate_math.h for why eulerAngles(2,1,0) must not be used here) and the
+    // odometry's relative yaw are two independent estimates of the same quantity; they
     // agree up to the yaw drift accumulated between the two visits (a couple of degrees on
     // an office loop).  A perceptual alias that slides along repeating corridor geometry has
     // an arbitrary measured relative yaw.

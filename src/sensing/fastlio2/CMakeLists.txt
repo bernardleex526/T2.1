@@ -84,6 +84,16 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 
 if(BUILD_TESTING)
+  # Deterministic tests of the static-window IMU init decision (map_builder/imu_init.h):
+  # window selection, the max-wait fallback that must fire for a vibrating non-rotating
+  # platform, and the window-scoped accel deviation used by the gravity adoption.
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_imu_init test/test_imu_init.cpp)
+  target_include_directories(test_imu_init PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                   ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(test_imu_init pcl_conversions)
+  target_link_libraries(test_imu_init ${PCL_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

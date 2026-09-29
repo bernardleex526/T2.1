@@ -307,8 +307,12 @@ RegistrationResult runRegistrationCascade(const CloudType::Ptr &target_submap_wo
                 gicp.setInputSource(src);
                 CloudType::Ptr out(new CloudType);
                 gicp.align(*out, guess.cast<float>());
-                if (gicp.hasConverged())
-                    *out_T = gicp.getFinalTransformation().cast<double>();
+                // N5: always publish the transform the returned RMSE was measured on.  Writing
+                // it only when hasConverged() paired an in-budget-but-unconverged RMSE with the
+                // SEED instead of the coarse result - and in the wide->narrow chain the narrow
+                // RMSE with wide_T - so the fine stage was seeded with a transform no gate had
+                // scored.
+                *out_T = gicp.getFinalTransformation().cast<double>();
                 return {std::sqrt(gicp.getFitnessScore()), gicp.hasConverged()};
             };
 

@@ -1,4 +1,5 @@
 #include "imu_processor.h"
+#include "imu_init.h"
 
 IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf), m_logger(rclcpp::get_logger("imu_processor"))
 {
@@ -17,87 +18,25 @@ IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config
 bool IMUProcessor::initialize(SyncPackage &package)
 {
     m_imu_cache.insert(m_imu_cache.end(), package.imus.begin(), package.imus.end());
-    const bool use_static_window = m_config.imu_init_window_s > 0.0;
-    if (!use_static_window)
-    {
-        if (m_imu_cache.size() < static_cast<size_t>(m_config.imu_init_num))
-            return false;
-        // legacy path: initialize from everything collected so far (see below via window == full cache)
-    }
-    else
-    {
-        const double span = m_imu_cache.back().time - m_imu_cache.front().time;
-        if (span < m_config.imu_init_window_s && span < m_config.imu_init_max_wait_s)
-            return false;
-    }
-
-    // Pick the analysis window: legacy = whole cache; static-window mode = the quietest
-    // contiguous window of imu_init_window_s inside the cache (best = min per-axis gyro std).
-    // Scoring all windows keeps the init general: whatever the platform (dog, handheld),
-    // bg/gravity are estimated over a genuinely stationary stretch when one exists.
-    size_t n = m_imu_cache.size();
-    size_t i0 = 0, i1 = n; // [i0, i1)
-    if (use_static_window)
-    {
-        const double w = m_config.imu_init_window_s;
-        size_t wlen = 1;
-        while (wlen < n && m_imu_cache[wlen].time - m_imu_cache[0].time < w)
-            ++wlen;
-        if (wlen >= n)
-            wlen = n;
-        double best_score = 1e18;
-        for (size_t s = 0; s + wlen <= n; ++s)
-        {
-            V3D gm = V3D::Zero(), am = V3D::Zero(), gdev = V3D::Zero(), adev = V3D::Zero();
-            for (size_t k = s; k < s + wlen; ++k)
-            {
-                gm += m_imu_cache[k].gyro;
-                am += m_imu_cache[k].acc;
-            }
-            gm /= wlen; am /= wlen;
-            for (size_t k = s; k < s + wlen; ++k)
-            {
-                gdev += (m_imu_cache[k].gyro - gm).cwiseAbs2();
-                adev += (m_imu_cache[k].acc - am).cwiseAbs2();
-            }
-            gdev = (gdev / wlen).cwiseSqrt();
-            adev = (adev / wlen).cwiseSqrt();
-            double score = gdev.maxCoeff();
-            if (score < best_score)
-            {
-                best_score = score;
-                i0 = s;
-                i1 = s + wlen;
-            }
-        }
-        const double span = m_imu_cache.back().time - m_imu_cache.front().time;
-        const bool waited_out = span >= m_config.imu_init_max_wait_s && !(span >= m_config.imu_init_window_s && best_score < m_config.imu_init_static_gyro_std);
-        // Static verdict on the chosen window
-        V3D gm = V3D::Zero(), gdev = V3D::Zero(), adev = V3D::Zero();
-        {
-            V3D am = V3D::Zero();
-            for (size_t k = i0; k < i1; ++k)
-            {
-                gm += m_imu_cache[k].gyro;
-                am += m_imu_cache[k].acc;
-            }
-            gm /= (i1 - i0);
-            am /= (i1 - i0);
-            for (size_t k = i0; k < i1; ++k)
-            {
-                gdev += (m_imu_cache[k].gyro - gm).cwiseAbs2();
-                adev += (m_imu_cache[k].acc - am).cwiseAbs2();
-            }
-            gdev = (gdev / (i1 - i0)).cwiseSqrt();
-            adev = (adev / (i1 - i0)).cwiseSqrt();
-        }
-        const bool is_static = gdev.maxCoeff() < m_config.imu_init_static_gyro_std &&
-                               adev.maxCoeff() < m_config.imu_init_static_acc_dev;
-        if (!is_static && !waited_out)
-            return false; // keep waiting for a static window
+    // Window selection + readiness verdict.  Legacy = whole cache once imu_init_num samples
+    // are buffered; static-window mode = the quietest contiguous imu_init_window_s inside the
+    // cache, with a TIME-based fallback after imu_init_max_wait_s (see imu_init.h; the fallback
+    // must not additionally require a quiet accel or init deadlocks, review item B3).
+    const ImuInitPlan plan = planImuInit(m_imu_cache, m_config.imu_init_window_s,
+                                         m_config.imu_init_max_wait_s,
+                                         m_config.imu_init_static_gyro_std,
+                                         m_config.imu_init_static_acc_dev,
+                                         m_config.imu_init_num);
+    if (!plan.ready)
+        return false;
+    const size_t i0 = plan.i0, i1 = plan.i1;
+    const size_t n = m_imu_cache.size();
+    if (plan.use_static_window)
         RCLCPP_WARN(m_logger, "IMU init window [%zu,%zu)/%zu gyro_std=%.5f acc_dev=%.4f static=%d waited_out=%d",
-                    i0, i1, n, gdev.maxCoeff(), adev.maxCoeff(), (int)is_static, (int)waited_out);
-    }
+                    i0, i1, n, plan.gyro_std, plan.acc_dev, (int)plan.is_static, (int)plan.waited_out);
+    if (plan.waited_out)
+        RCLCPP_WARN(m_logger, "IMU init: no static window within %.1fs; falling back to the quietest window (ends %.3fs before the newest IMU sample) with v=0 at its end",
+                    m_config.imu_init_max_wait_s, m_imu_cache.back().time - m_imu_cache[i1 - 1].time);
 
     V3D acc_mean = V3D::Zero();
     V3D gyro_mean = V3D::Zero();
@@ -118,18 +57,18 @@ bool IMUProcessor::initialize(SyncPackage &package)
         // not a textbook 9.81. Datasets differ by up to ~3% (BMI085/VN200 scale error
         // or local g), which otherwise becomes a constant accel leak the accel-bias
         // state must absorb (clamped) every scan, corrupting fast-motion prediction.
-        // Only adopt the measured magnitude when the init window is genuinely static.
-        V3D acc_dev = V3D::Zero();
-        for (const auto &imu : m_imu_cache)
-            acc_dev += (imu.acc - acc_mean).cwiseAbs2();
-        acc_dev = (acc_dev / static_cast<double>(m_imu_cache.size())).cwiseSqrt();
+        // Only adopt the measured magnitude when the init window is genuinely static - and
+        // measure the deviation over THAT window (not the whole cache, whose tail may be
+        // seconds of motion in waited-out mode) with the configured threshold (review N1).
         const double g_meas = acc_mean.norm();
-        if (g_meas > 8.5 && g_meas < 10.5 && acc_dev.maxCoeff() < 0.3)
+        const bool window_static = plan.is_static || !plan.use_static_window;
+        if (g_meas > 8.5 && g_meas < 10.5 && window_static &&
+            plan.acc_dev < m_config.imu_init_static_acc_dev)
             State::gravity = g_meas;
         m_kf->x().r_wi = (Eigen::Quaterniond::FromTwoVectors((-acc_mean).normalized(), V3D(0.0, 0.0, -1.0)).matrix());
         m_kf->x().initGravityDir(V3D(0, 0, -1.0));
         RCLCPP_WARN(m_logger, "IMU init: g=%.4f (acc_dev_max=%.4f) bg=[%.5f %.5f %.5f] acc_mean=[%.4f %.4f %.4f]",
-                    State::gravity, acc_dev.maxCoeff(),
+                    State::gravity, plan.acc_dev,
                     gyro_mean.x(), gyro_mean.y(), gyro_mean.z(),
                     acc_mean.x(), acc_mean.y(), acc_mean.z());
     }
@@ -141,8 +80,28 @@ bool IMUProcessor::initialize(SyncPackage &package)
     m_kf->P().block<3, 3>(15, 15) = M3D::Identity() * 0.0001;
     m_kf->P().block<3, 3>(18, 18) = M3D::Identity() * 0.0001;
 
+    // The state above (r_wi, bg, gravity) belongs to the END of the chosen analysis window,
+    // but m_last_imu is the NEWEST buffered sample.  Jumping to it used to drop the rotation
+    // and velocity of [i1, n) - seconds of it in the waited-out fallback - and to invent a
+    // stationary platform at the current time (review N2).  Propagate the remainder so the
+    // state really is at m_imu_cache.back().  v = 0 at the window end remains the assumption
+    // of a static window; its covariance (P block 12, left at the identity) stays large
+    // enough for the filter to correct it as soon as a scan observes the motion.
+    for (size_t k = i1; k > 0 && k < m_imu_cache.size(); ++k)
+    {
+        const IMUData &head = m_imu_cache[k - 1];
+        const IMUData &tail = m_imu_cache[k];
+        Input inp;
+        inp.gyro = 0.5 * (head.gyro + tail.gyro);
+        inp.acc = 0.5 * (head.acc + tail.acc);
+        m_kf->predict(inp, tail.time - head.time, m_Q);
+    }
+
     m_last_imu = m_imu_cache.back();
-    m_last_propagate_end_time = package.cloud_end_time;
+    // The state now lives at the last buffered sample, not at the end of the lidar frame.
+    // undistort() propagates from here, so the last interval is not counted twice: the pair
+    // whose tail is exactly this timestamp gets dt = 0 (tail - end).
+    m_last_propagate_end_time = m_last_imu.time;
     return true;
 }
 
