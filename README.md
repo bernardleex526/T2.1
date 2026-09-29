@@ -274,6 +274,62 @@ ros2 service call /multi_nav/update_name g1_multi_goal_manager/srv/UpdateGoalNam
 ros2 service call /multi_nav/clear g1_multi_goal_manager/srv/ClearGoals                 #清除所有导航点
 ros2 service call /nav/location g1_multi_goal_manager/srv/GetCurrentLocation            #获取当前位置
 ```
+## T2.1 集成候选（分支 `algo/integration`，尚未合入 main）
+
+本工作区 `wt/integration` 的 `algo/integration` 是 WP2 T2.1 的集成候选：以 main `0a7f513` 为基，
+按补丁逐个挑选并修正评审问题。`git patch-id` 证明 `algo/loop` 的 `89134bf`/`1569591` 与
+`algo/lio-drift` 的 `e1de4f6`/`3d7d388` 补丁完全相同，因此只合入一份。
+
+| 集成内容 | 来源提交（本分支） | 说明 |
+| :--- | :--- | :--- |
+| 点平面质量门 + 实测重力（上游修复） | `393a153` ← `e1de4f6` | 恢复上游 `s > 0.9` 门限；`gravity_align` 采用实测 |g| |
+| 静态窗 IMU 初始化 + 更密扫描滤波 | `83a8b7b` ← `3d7d388` | `imu_init_window_s` 静窗判定与整段缓存噪声 |
+| `det_range: 100` | `4cb7999` ← `5b855d8` | 与上游 mcdviral 一致；逐序列量程仍由 manifest 覆盖 |
+| PGO 多种子回环 + 可信性门控 | `d87b873` ← `759d19b`、`38335e8` ← `c920684` | 仅取回环提交（前端重复补丁不合入） |
+| 重定位外点门控 / EMA / 有界 ICP | `3a5894e` ← `1216e46` | 见下方参数说明 |
+
+**集成期修正（评审 B1/B2/B3 与 N1–N5、NB1/NB2）**：`c43b428`、`3587b2d`、`4aad2ea`、`58884b0`、`135b075`
+
+* B1 回环实测偏航角改用 `pgo_loop::yawZ`（`atan2(R10,R00)`）与 `withYawAboutZ`，不再用
+  `eulerAngles(2,1,0)`（Eigen 会把第一个角折到半区间，−1° 会读成 +179°，同向重访会被误拒、
+  180° 翻转反而可能通过）。
+* B2 局部定位门控抽成 `localizers/outlier_gate.h`：increment 量在**机体系**位姿上比较（不再随
+  里程计原点距离退化）、参考值是**上一次被接受的原始解**（不是 EMA）、并且是**有界**的——
+  `gate_max_consecutive_rejects` 次被拒后判定 INVALID 并按当前候选重播种且**继续门控**，
+  之后连续 `gate_recovery_accepts` 次接受即恢复 valid。
+* B3 IMU 静窗初始化：最长等待（`imu_init_max_wait_s`）回退**只按时间**触发，不再额外要求陀螺
+  安静（否则"振动但不旋转"的平台会永远初始化失败并让缓存无限增长）。
+* N1 重力判定用**所选窗口**的加速度离散度与配置阈值；N2 状态从窗末传播到最新 IMU 采样
+  （不再带着 v=0 直接跳到当前时刻）；N3 局部定位打分用米制对应半径 + 内点比例（PCL 的
+  `getFitnessScore` 参数是**平方距离**）；N4 相对平移按**矢量**比较；N5 粗配准位姿无条件写出。
+
+### 参数单位与默认值（易错点）
+
+* `fastlio2` 的 `point_quality_thresh`：点平面残差**质量评分 s（无量纲）**，
+  `s = 1 - 0.9·|点到面残差| / sqrt(|p|)`，上游 FAST-LIO2 门限为 `s > 0.9`。
+  `lio.yaml` / `lio_highres.yaml` 均设 `0.9`；`commons.h` 里的 `0.1` 只是结构体默认值。
+  它与 `esti_plane(points_near, 0.1, ...)` 中的 `0.1 m`（平面拟合距离）不是同一个量。
+* `localizer` 的 `rough/refine_score_thresh`：落在对应半径内的内点**平均平方最近邻距离 [m²]**，
+  取值范围上限即 `rough_max_corr_dist²=0.1225` / `refine_max_corr_dist²=0.0225`；
+  `*_min_inlier_ratio` 为内点占整帧扫描的比例（PCL 的 `getFitnessScore` 看不到部分匹配）。
+  仓库默认值取已验证 TIERS 运行使用的 `2.0 Hz / 8,15 次迭代 / 0.08,0.02`。
+* `localizer` 门控：`gate_max_translation_m` / `gate_max_angle_rad` 是每次 ICP 更新相对上次被接受
+  原始解的机体系位姿增量上限 [m] / [rad]；`gate_ema_alpha` 只影响发布出去的 `map←odom`。
+* `pgo` 的 `max_loop_correction_m`、`min_odo_correction_m`、`cross_seed_max_m` 都是**矢量**量
+  （分别为里程计相对平移与实测相对平移之差、其模长下限、两种子实测相对平移之差）。
+
+### 运行模式与验证边界
+
+* `map→odom` 有两个**互斥**生产者：`pgo_node`（建图，图优化偏移）与 `localizer_node`（先验地图
+  定位）。二者同时运行会给同一 TF 对产生两个发布者，**不要**在同一 ROS_DOMAIN_ID 同时启动；
+  `lio_node` 只发布 `odom→body`。
+* 已验证：三包 Release 拷贝安装构建通过；4 个确定性 gtest 目标（`test_imu_init`、`test_gate_math`、
+  `test_localizer_gate`、`test_scan_context_yaw`）全部通过；两种模式各 ≤20s 传感器时间的实机冒烟
+  （lio+pgo 建图、lio+localizer 定位）进程健康、位姿有限且推进、服务与地图保存成功、无重复 TF 发布者。
+* **未验证**（资源受限，需一次完整回放）：ATE/RPE 指标重算、回环门控在真实重访上的表现；
+  `c920684` 的门限是在 `det_range=40` 前端上标定的，而集成前端为 `100`；N4 的矢量修正量与
+  N3 的米制评分/内点比例门限都需要用真实回放重新标定。上述冒烟**不构成厘米级精度结论**。
+
 ## FAST-LIO既存研究
 
 1. [ikd-Tree](https://github.com/hku-mars/ikd-Tree): A state-of-art dynamic KD-Tree for 3D kNN search.
