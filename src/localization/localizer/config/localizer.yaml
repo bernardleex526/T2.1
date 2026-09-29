@@ -2,7 +2,8 @@ cloud_topic: /mapping/body_cloud
 odom_topic: /mapping/lio_odom
 map_frame: map
 local_frame: odom
-update_hz: 1.0
+# 2.0 Hz is the rate the verified TIERS relocalization runs used.
+update_hz: 2.0
 
 # Path of the prior PCD map the localizer relocalizes against.
 # Resolution order: the -p pcd_path:=<file> launch/CLI parameter wins; otherwise this key.
@@ -12,12 +13,34 @@ update_hz: 1.0
 # Example: pcd_path: "/home/lee/t21_wp2/reports/maps/map.pcd"
 pcd_path: ""
 
+# Two-stage ICP.  *_score_thresh is the MEAN SQUARED nearest-neighbour distance over the
+# inlier correspondences [m^2], measured within *_max_corr_dist [m]; its maximum possible
+# value is *_max_corr_dist^2 (0.35^2 = 0.1225 rough, 0.15^2 = 0.0225 refine), so a threshold
+# above that is vacuous.  *_min_inlier_ratio is the fraction of the scan that must have a map
+# point within the radius - PCL's getFitnessScore() alone cannot see a partial match.
+# The values below are the ones the verified TIERS runs used (reloc-map1/map2-opt2).
 rough_scan_resolution: 0.25
 rough_map_resolution: 0.25
-rough_max_iteration: 5
-rough_score_thresh: 0.2
+rough_max_iteration: 8
+rough_score_thresh: 0.08
+rough_max_corr_dist: 0.35
+rough_min_inlier_ratio: 0.2
 
 refine_scan_resolution: 0.1
 refine_map_resolution: 0.1
-refine_max_iteration: 10
-refine_score_thresh: 0.1
+refine_max_iteration: 15
+refine_score_thresh: 0.02
+refine_max_corr_dist: 0.15
+refine_min_inlier_ratio: 0.2
+
+# Physical-consistency gate of the accepted map<-odom updates (see
+# src/localizers/outlier_gate.h): the body-pose innovation of a new candidate against the
+# last accepted RAW one must stay below these bounds, otherwise the update is rejected.
+# After gate_max_consecutive_rejects rejections the lock is declared INVALID, re-seeded on the
+# current candidate and gating continues; gate_recovery_accepts consecutive accepted updates
+# then report it valid again (no service call needed).
+gate_max_translation_m: 0.04
+gate_max_angle_rad: 0.03
+gate_max_consecutive_rejects: 10
+gate_recovery_accepts: 10
+gate_ema_alpha: 0.1

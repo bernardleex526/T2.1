@@ -137,6 +137,63 @@ TEST(OffsetGate, ConsecutiveRejectsDeclareLostAndReseed)
     EXPECT_TRUE(resumed.accepted);
 }
 
+// ---------------------------------------------------------------------------
+// B2 / NB1: the node-level lifecycle.  These drive exactly the sequence localizer_node's
+// timerCB feeds the gate, including the transition that used to break: after `lost` the lock
+// is INVALID but the gate must KEEP GATING, and a run of accepted updates must restore it to
+// valid without any service call.
+// ---------------------------------------------------------------------------
+TEST(OffsetGate, ValidOnlyAfterServiceRequestThenLostThenRecovered)
+{
+    OffsetGateConfig cfg = testConfig();
+    cfg.recovery_accepts = 3;
+    OffsetOutlierGate gate(cfg);
+    const V3D body_t(5.0, 0.0, 0.0);
+
+    // Startup: the first successful ICP result becomes the reference but the lock is NOT
+    // reported valid - the operator has not relocalized it yet (upstream behaviour).
+    OffsetGateOutcome out = gate.update(M3D::Identity(), V3D::Zero(), body_t, false);
+    EXPECT_TRUE(out.locked);
+    EXPECT_FALSE(gate.valid());
+
+    // Operator relocalize: the next adopted candidate locks it and it is valid.
+    out = gate.update(M3D::Identity(), V3D(0.01, 0.0, 0.0), body_t, true);
+    EXPECT_TRUE(out.locked);
+    EXPECT_TRUE(gate.valid());
+
+    // The lock then degrades: 3 consecutive rejects (max_consecutive_rejects) -> lost.
+    const V3D jump(1.0, 0.0, 0.0);
+    for (int i = 1; i <= 3; ++i)
+        out = gate.update(M3D::Identity(), jump, body_t, false);
+    EXPECT_TRUE(out.lost);
+    EXPECT_FALSE(gate.valid());      // relocalize_check now reports INVALID
+    EXPECT_TRUE(gate.awaitingRecovery());
+
+    // ... but the gate is still active: an implausible candidate is rejected, NOT adopted.
+    out = gate.update(M3D::Identity(), jump + V3D(3.0, 0.0, 0.0), body_t, false);
+    EXPECT_FALSE(out.accepted);
+    EXPECT_FALSE(out.locked);
+    EXPECT_FALSE(gate.valid());
+
+    // 3 consecutive plausible updates re-validate the lock, with no service call.
+    for (int i = 1; i <= 2; ++i)
+    {
+        out = gate.update(M3D::Identity(), jump + V3D(0.01 * i, 0.0, 0.0), body_t, false);
+        EXPECT_TRUE(out.accepted);
+        EXPECT_FALSE(out.recovered);
+    }
+    out = gate.update(M3D::Identity(), jump + V3D(0.03, 0.0, 0.0), body_t, false);
+    EXPECT_TRUE(out.recovered);
+    EXPECT_TRUE(gate.valid());
+
+    // A later relocalize request invalidates the lock until the next adopted candidate.
+    gate.requestRelock();
+    EXPECT_FALSE(gate.valid());
+    out = gate.update(M3D::Identity(), V3D(9.0, 9.0, 0.0), body_t, true);
+    EXPECT_TRUE(out.locked);
+    EXPECT_TRUE(gate.valid());
+}
+
 TEST(OffsetGate, ResetRelocksOnALargeJump)
 {
     OffsetOutlierGate gate(testConfig());

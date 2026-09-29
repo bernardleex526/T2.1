@@ -43,7 +43,6 @@ struct NodeState
 
     bool message_received = false;
     bool service_received = false;
-    bool localize_success = false;
     builtin_interfaces::msg::Time last_message_time;
     CloudType::Ptr last_cloud = std::make_shared<CloudType>();
     M3D last_r;                          // localmap_body_r
@@ -142,13 +141,15 @@ public:
         if (config["gate_max_translation_m"]) m_config.gate.max_translation_m = config["gate_max_translation_m"].as<double>();
         if (config["gate_max_angle_rad"]) m_config.gate.max_angle_rad = config["gate_max_angle_rad"].as<double>();
         if (config["gate_max_consecutive_rejects"]) m_config.gate.max_consecutive_rejects = config["gate_max_consecutive_rejects"].as<int>();
+        if (config["gate_recovery_accepts"]) m_config.gate.recovery_accepts = config["gate_recovery_accepts"].as<int>();
         if (config["gate_ema_alpha"]) m_config.gate.ema_alpha = config["gate_ema_alpha"].as<double>();
         RCLCPP_INFO(this->get_logger(),
-                    "correspondence: rough %.2fm/%.2f refine %.2fm/%.2f | gate: %.3fm %.3frad %d rejects alpha %.2f",
+                    "correspondence: rough %.2fm/%.2f refine %.2fm/%.2f | gate: %.3fm %.3frad %d rejects/%d recovery alpha %.2f",
                     m_localizer_config.rough_max_corr_dist, m_localizer_config.rough_min_inlier_ratio,
                     m_localizer_config.refine_max_corr_dist, m_localizer_config.refine_min_inlier_ratio,
                     m_config.gate.max_translation_m, m_config.gate.max_angle_rad,
-                    m_config.gate.max_consecutive_rejects, m_config.gate.ema_alpha);
+                    m_config.gate.max_consecutive_rejects, m_config.gate.recovery_accepts,
+                    m_config.gate.ema_alpha);
 
         RCLCPP_INFO(this->get_logger(), "Using PCD path: %s", m_config.pcd_path.c_str());
 
@@ -268,54 +269,44 @@ public:
             M3D cand_offset_r = map_body_r * current_local_r.transpose();
             V3D cand_offset_t = -map_body_r * current_local_r.transpose() * current_local_t + map_body_t;
 
-            if (!m_state.localize_success)
+            // The gate owns the whole lock lifecycle (see outlier_gate.h).  It is entered on
+            // EVERY successful ICP result: the only unconditional-adopt cases are the very first
+            // lock and an operator relocalize request - never "the lock is currently degraded",
+            // which would leave the gate bypassed forever (review NB1).
+            const OffsetGateOutcome outcome =
+                m_gate.update(cand_offset_r, cand_offset_t, current_local_t, m_state.service_received);
+            m_state.last_offset_r = m_gate.published_r();
+            m_state.last_offset_t = m_gate.published_t();
+            if (m_state.service_received)
             {
-                // First lock (or after a relocalize request): adopt unconditionally.
-                m_gate.reset(cand_offset_r, cand_offset_t);
-                m_state.last_offset_r = m_gate.published_r();
-                m_state.last_offset_t = m_gate.published_t();
-                if (m_state.service_received)
-                {
-                    std::lock_guard<std::mutex> lock(m_state.service_mutex);
-                    m_state.localize_success = true;
-                    m_state.service_received = false;
-                    RCLCPP_INFO(this->get_logger(),
-                                "localization lock adopted at t=[%.3f %.3f %.3f]",
-                                m_gate.published_t().x(), m_gate.published_t().y(),
-                                m_gate.published_t().z());
-                }
+                std::lock_guard<std::mutex> lock(m_state.service_mutex);
+                m_state.service_received = false;
+                RCLCPP_INFO(this->get_logger(), "localization lock adopted at t=[%.3f %.3f %.3f]",
+                            m_gate.published_t().x(), m_gate.published_t().y(),
+                            m_gate.published_t().z());
+            }
+            else if (outcome.recovered)
+            {
+                RCLCPP_INFO(this->get_logger(),
+                            "localization lock recovered after %d consecutive accepted ICP updates (valid again)",
+                            m_config.gate.recovery_accepts);
+            }
+            else if (outcome.lost)
+            {
+                RCLCPP_ERROR(this->get_logger(),
+                    "outlier gate: %d consecutive ICP updates rejected; declaring the localization INVALID and re-seeding on the current candidate (gating continues, %d accepted updates re-validate the lock)",
+                    m_config.gate.max_consecutive_rejects, m_config.gate.recovery_accepts);
+            }
+            else if (outcome.accepted)
+            {
+                RCLCPP_DEBUG(this->get_logger(), "ICP update accepted: innovation %.4fm %.4frad",
+                             outcome.innovation_m, outcome.innovation_rad);
             }
             else
             {
-                // Physical-consistency gate: compare the body pose this candidate implies with
-                // the one implied by the last ACCEPTED raw candidate (see outlier_gate.h), and
-                // smooth only what is published.
-                const OffsetGateOutcome outcome =
-                    m_gate.update(cand_offset_r, cand_offset_t, current_local_t);
-                m_state.last_offset_r = m_gate.published_r();
-                m_state.last_offset_t = m_gate.published_t();
-                if (outcome.accepted)
-                {
-                    RCLCPP_DEBUG(this->get_logger(), "ICP update accepted: innovation %.4fm %.4frad",
-                                 outcome.innovation_m, outcome.innovation_rad);
-                }
-                else
-                {
-                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                        "ICP update rejected by outlier gate: innovation=%.3fm %.3frad (%d consecutive)",
-                        outcome.innovation_m, outcome.innovation_rad, outcome.consecutive_rejects);
-                }
-                if (outcome.lost)
-                {
-                    // Bounded recovery: the gate re-seeded on this candidate so tracking can
-                    // resume, but the lock is no longer trustworthy - report INVALID (through
-                    // relocalize_check) instead of staying silently valid while dead reckoning.
-                    RCLCPP_ERROR(this->get_logger(),
-                        "outlier gate: %d consecutive ICP updates rejected; declaring the localization INVALID and re-seeding on the current candidate (call /relocalize to re-lock)",
-                        m_config.gate.max_consecutive_rejects);
-                    std::lock_guard<std::mutex> lock(m_state.service_mutex);
-                    m_state.localize_success = false;
-                }
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "ICP update rejected by outlier gate: innovation=%.3fm %.3frad (%d consecutive)",
+                    outcome.innovation_m, outcome.innovation_rad, outcome.consecutive_rejects);
             }
         }
         sendBroadCastTF(current_time);
@@ -397,7 +388,9 @@ public:
             m_state.initial_guess.block<3, 3>(0, 0) = (yaw_angle * roll_angle * pitch_angle).toRotationMatrix().cast<float>();
             m_state.initial_guess.block<3, 1>(0, 3) = V3F(x, y, z);
             m_state.service_received = true;
-            m_state.localize_success = false;
+            // Until the next adopted candidate the lock is NOT valid: the operator is re-seeding
+            // it and relocalize_check must not keep answering valid in the meantime.
+            m_gate.requestRelock();
         }
 
         RCLCPP_INFO(this->get_logger(), "Relocalization started with initial pose: [%.2f, %.2f, %.2f] RPY: [%.2f, %.2f, %.2f]",
@@ -414,7 +407,7 @@ public:
         if (request->code == 1)
             response->valid = true;
         else
-            response->valid = m_state.localize_success;
+            response->valid = m_gate.valid();
         return;
     }
     void publishMapCloud(builtin_interfaces::msg::Time &time)
