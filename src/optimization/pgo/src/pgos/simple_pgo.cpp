@@ -351,14 +351,16 @@ void SimplePGO::searchForLoopPairs()
                 !(std::abs(a.dyaw_meas_deg) <= m_config.gate.max_yaw_disagreement_deg))
                 fails += fails.empty() ? "yaw_disagreement" : ",yaw_disagreement";
             // Correction plausibility: bound grows with the travelled path between the pair.
-            if (!(a.corr <= corr_allowance))
+            if (std::abs(a.corr) > corr_allowance)
                 fails += fails.empty() ? "correction" : ",correction";
             // The odometry-prior seed may only claim a loop when registration measurably
             // pulled the two clouds together (see GateConfig::min_odo_correction_m);
             // otherwise the factor would just repeat the odometry constraint.
             const bool is_odo_prior_seed = !is_scan_context || si == 1;
-            if (is_odo_prior_seed &&
-                !(a.corr >= m_config.gate.min_odo_correction_m))
+            // Correction plausibility, SYMMETRIC (STEP 4): a stretch is as implausible as a
+            // shrink, and any candidate whose |correction| is under min_odo_correction_m is
+            // an odometry no-op regardless of which seed produced it.
+            if (!(std::abs(a.corr) >= m_config.gate.min_odo_correction_m))
                 fails += fails.empty() ? "odo_no_correction" : ",odo_no_correction";
             // z plausibility of the measured relative translation (see
             // GateConfig::max_loop_z_offset_m).

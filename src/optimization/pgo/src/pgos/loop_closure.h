@@ -160,7 +160,14 @@ struct GateConfig
     // corridor repeating every few metres) than a genuine loop, so it is rejected.
     // Applied to both detectors; for the radius detector it is nearly vacuous, because those
     // candidates never assert co-location and the registration stays at the odometry prior.
-    double max_loop_correction_m = 2.0;
+    // STEP 4 CALIBRATION (after the fastlio2 point-quality fix, HILTI ATE 3.52 m -> 0.17 m):
+    // the old floor (2.0 m) and ratio (5 %/m) were tuned for the DRIFTING frontend; with the
+    // corrected one the measured drift is ~0.2-0.35 % of path (HILTI 0.17 m / ~50 m,
+    // TIERS 2.4-2.9 cm), and enforcing six sub-noise "corrections" of 0-0.7 m on
+    // tiers_indoor_office2 (all revisits of the start region) degraded ATE from 2.89 to
+    // 3.50 cm.  The bound is also SYMMETRIC now: a registration that STRETCHES the pair
+    // (negative correction) is as implausible as one that shrinks it.
+    double max_loop_correction_m = 0.5;
     // STEP 3: the correction bound above is a FLOOR.  The bound actually applied is
     //   max(max_loop_correction_m, correction_drift_ratio * travelled_path_m)
     // where travelled_path_m is the cumulative raw-odometry path length between the two
@@ -168,10 +175,10 @@ struct GateConfig
     // absolute bound is either too tight for long loops (a genuine revisit after 120 m of
     // driving legitimately carries a ~2-3 m correction - measured on
     // mid360s_office_loop_01: kf357<->kf70 demands 3.26 m after 154 s / ~118 m of travel)
-    // or too loose for short ones.  0.05 = 5 % of path is ~25x the measured genuine
-    // relative drift of this sequence (0.096 m over 164 s) while every measured perceptual
-    // alias of this sequence demands 6-25 m (7-19 % of its own inter-keyframe path).
-    double correction_drift_ratio = 0.05;
+    // or too loose for short ones.  0.01 = 1 % of path is ~3x the measured corrected-LIO
+    // drift (0.34 % on HILTI exp18) while every measured perceptual alias of
+    // mid360s_office_loop_01 demands 6-25 m (7-19 % of its own inter-keyframe path).
+    double correction_drift_ratio = 0.01;
     // STEP 3: revisit-consistency gate (scan_context candidates only).  A scan-context
     // candidate asserts CO-LOCATION: the registration seeds it with zero relative
     // translation, so a genuine revisit must come out with a small measured relative
@@ -182,19 +189,16 @@ struct GateConfig
     // along repeating corridor geometry until it agreed with the odometry separation) is a
     // FALSE loop whose factor happens to coincide with odometry; reject it explicitly.
     double max_revisit_rel_t_m = 4.0;
-    // STEP 3: minimum measured CORRECTION for the odometry-prior seed to count as a loop.
-    // The odometry-prior seed ("are the two scans consistent with what odometry already
-    // claims?") trivially passes the geometric gates for any two NEARBY keyframes whose
-    // submaps overlap, without the pair being a revisit at all (measured on
-    // mid360s_office_loop_01: kf228<->kf75, separation 6.6 m, overlap 0.48, plane RMSE
-    // 0.022 m - an odometry no-op, not a loop).  A loop factor is only worth adding when
-    // registration measurably PULLED the two clouds together, i.e. the measured relative
-    // translation is at least this much SHORTER than the odometry separation; otherwise
-    // the candidate carries no information odometry does not already have and is rejected.
-    // co-located seed is exempt: it does not use the odometry translation at all, so a
-    // small measured correction there is still a genuine revisit (e.g. kf370<->kf55,
-    // correction 0.096 m, accepted).
-    double min_odo_correction_m = 0.3;
+    // STEP 3: minimum measured CORRECTION (in absolute value) for ANY accepted loop, from
+    // either seed.  A candidate whose registration result agrees with the odometry to
+    // within this bound is an odometry NO-OP: the factor would only re-enforce what
+    // odometry already says, but at an ICP measurement error far above the loop's 1 cm
+    // noise model, and enforcing that error measurably degrades the graph (measured on
+    // tiers_indoor_office2_mid360, run loop-t2: six accepted no-op corrections of 0.0-0.27
+    // m on mocap-grade odometry degraded ATE from 2.89 to 3.50 cm).  A loop factor is only
+    // worth adding when registration claims a correction larger than the ICP measurement
+    // noise of co-located submaps (measured ~0.1 m).
+    double min_odo_correction_m = 0.15;
     // STEP 3: cross-seed agreement.  The two seeds are two INDEPENDENT hypotheses about
     // where the revisit is: co-located + descriptor yaw, and the odometry relative pose.
     // When BOTH registrations converge with corroborating overlap, a genuine revisit must

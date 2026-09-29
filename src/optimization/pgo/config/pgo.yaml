@@ -172,8 +172,9 @@ degeneracy_min_eig_ratio: 0.003   # Reject when lambda_min/lambda_max of
                                   # distribution and for the synthetic check that the statistic
                                   # does go to ~0 for a truly unconstrained direction.
 
-max_loop_correction: 2.0          # [m] FLOOR of the plausibility bound on the CORRECTION a
-                                  # candidate demands.  The bound actually applied is
+max_loop_correction: 0.5          # [m] FLOOR of the SYMMETRIC plausibility bound on the
+                                  # CORRECTION a candidate demands (a stretch is as implausible
+                                  # as a shrink).  The bound actually applied is
                                   #   max(max_loop_correction, correction_drift_ratio * path_m)
                                   # where path_m is the cumulative raw-odometry path length
                                   # between the two keyframes of the pair.  A fixed absolute
@@ -181,7 +182,7 @@ max_loop_correction: 2.0          # [m] FLOOR of the plausibility bound on the C
                                   # genuine end-of-loop family of this sequence legitimately
                                   # carries corrections up to 3.26 m, e.g. kf357<->kf70) and
                                   # too loose for short ones.
-correction_drift_ratio: 0.05      # correction bound grows by 5 % of the travelled path
+correction_drift_ratio: 0.01      # correction bound grows by 1 % of the travelled path
                                   # between the pair.  Basis: the measured genuine relative
                                   # drift of this sequence is 0.096 m over 164 s / ~118 m of
                                   # path (0.08 %); 5 % of path is ~60x that, while every
@@ -198,7 +199,7 @@ max_revisit_rel_t: 4.0            # [m] revisit-consistency gate, scan_context c
                                   # EVERY geometric gate at rel_t 7.06 m - the coarse GICP
                                   # slid along repeating corridor geometry).
 
-min_odo_correction: 0.3           # [m] minimum measured CORRECTION for the odometry-prior
+min_odo_correction: 0.15          # [m] minimum |correction| for ANY accepted loop (both seeds)
                                   # seed to count as a loop.  Registration must measurably
                                   # PULL the two clouds together (measured rel_t at least
                                   # this much shorter than the odometry separation);
