@@ -297,6 +297,9 @@ ros2 service call /nav/location g1_multi_goal_manager/srv/GetCurrentLocation    
   里程计原点距离退化）、参考值是**上一次被接受的原始解**（不是 EMA）、并且是**有界**的——
   `gate_max_consecutive_rejects` 次被拒后判定 INVALID 并按当前候选重播种且**继续门控**，
   之后连续 `gate_recovery_accepts` 次接受即恢复 valid。
+  被门控**拒绝**的候选**永不会**成为发布出去的 `map→odom`：丢失期间发布值冻结在最后一次可信值
+  （TF 本身没有有效标志位，下游可能忽略 `relocalize_check`），只有恢复到 valid 时才**直接释放**
+  到恢复后的位姿；跟踪用的内部参考量（也是下一次 ICP 的初值来源）与发布值分离。
 * B3 IMU 静窗初始化：最长等待（`imu_init_max_wait_s`）回退**只按时间**触发，不再额外要求陀螺
   安静（否则"振动但不旋转"的平台会永远初始化失败并让缓存无限增长）。
 * N1 重力判定用**所选窗口**的加速度离散度与配置阈值；N2 状态从窗末传播到最新 IMU 采样
