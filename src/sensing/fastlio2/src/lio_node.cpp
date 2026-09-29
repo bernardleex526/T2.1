@@ -277,7 +277,7 @@ private:
 
             // 状态约束参数 - 使用默认值
             m_builder_config.max_bias_gyro = config["max_bias_gyro"] ? config["max_bias_gyro"].as<double>() : 0.1;
-            m_builder_config.max_bias_accel = config["max_bias_accel"] ? config["max_bias_accel"].as<double>() : 0.2;
+            m_builder_config.max_bias_accel = config["max_bias_accel"] ? config["max_bias_accel"].as<double>() : 0.5;
             m_builder_config.max_velocity = config["max_velocity"] ? config["max_velocity"].as<double>() : 10.0;
 
             // 设置到State类中
@@ -563,6 +563,27 @@ private:
 
         if (m_builder->status() != BuilderStatus::MAPPING)
             return;
+
+        // Diagnostics every 100 scans: state, extrinsic, biases (one line each).
+        {
+            static long scan_count = 0;
+            if ((scan_count % 100) == 0)
+            {
+                const auto &x = m_kf->x();
+                Eigen::Quaterniond q_il_e(x.r_il);
+                RCLCPP_WARN(this->get_logger(),
+                            "STATE n=%ld t_wi=[%.3f %.3f %.3f] v=[%.3f %.3f %.3f] bg=[%.4f %.4f %.4f] ba=[%.4f %.4f %.4f] "
+                            "r_il_q=[%.5f %.5f %.5f %.5f] t_il=[%.4f %.4f %.4f]",
+                            scan_count,
+                            x.t_wi.x(), x.t_wi.y(), x.t_wi.z(),
+                            x.v.x(), x.v.y(), x.v.z(),
+                            x.bg.x(), x.bg.y(), x.bg.z(),
+                            x.ba.x(), x.ba.y(), x.ba.z(),
+                            q_il_e.x(), q_il_e.y(), q_il_e.z(), q_il_e.w(),
+                            x.t_il.x(), x.t_il.y(), x.t_il.z());
+            }
+            ++scan_count;
+        }
 
         broadCastTF(m_tf_broadcaster, m_node_config.world_frame, m_node_config.body_frame, m_package.lidar_end ? m_package.cloud_end_time : m_package.image_time);
 

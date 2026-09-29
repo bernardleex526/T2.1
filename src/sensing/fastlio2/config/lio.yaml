@@ -14,12 +14,12 @@ cube_len: 1000
 det_range: 40
 move_thresh: 1.5
 
-na: 0.1
-ng: 0.1
-nba: 0.0001
-nbg: 0.0001
+na: 0.06
+ng: 0.005
+nba: 0.00008
+nbg: 0.000003
 
-imu_init_num: 20
+imu_init_num: 100
 near_search_num: 5
 ieskf_max_iter: 5
 
@@ -35,7 +35,7 @@ imu_acc_scale: 10.0          # MID360 内置 IMU 设 10.0(其输出约为 g，×
 pcl2_time_field: ""
 pcl2_time_scale: 1.0
 
-point_quality_thresh: 0.1    # 与上游 FAST-LIO2 一致，过大会在结构稀疏处造成无有效点
+point_quality_thresh: 0.9    # 上游 FAST-LIO2 的 s>0.9 残差门限；稀疏处无有效点时由 IESKF 降级路径处理
 
 ext_il: [-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0, 1.0] # x y z qx qy qz qw
 ext_lc:

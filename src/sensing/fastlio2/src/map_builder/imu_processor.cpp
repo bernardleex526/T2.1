@@ -33,8 +33,25 @@ bool IMUProcessor::initialize(SyncPackage &package)
     m_kf->x().bg = gyro_mean;
     if (m_config.gravity_align)
     {
+        // The propagation model r_wi*(acc - ba) + g must null exactly at rest: the
+        // gravity magnitude has to match the specific force the IMU actually reports,
+        // not a textbook 9.81. Datasets differ by up to ~3% (BMI085/VN200 scale error
+        // or local g), which otherwise becomes a constant accel leak the accel-bias
+        // state must absorb (clamped) every scan, corrupting fast-motion prediction.
+        // Only adopt the measured magnitude when the init window is genuinely static.
+        V3D acc_dev = V3D::Zero();
+        for (const auto &imu : m_imu_cache)
+            acc_dev += (imu.acc - acc_mean).cwiseAbs2();
+        acc_dev = (acc_dev / static_cast<double>(m_imu_cache.size())).cwiseSqrt();
+        const double g_meas = acc_mean.norm();
+        if (g_meas > 8.5 && g_meas < 10.5 && acc_dev.maxCoeff() < 0.3)
+            State::gravity = g_meas;
         m_kf->x().r_wi = (Eigen::Quaterniond::FromTwoVectors((-acc_mean).normalized(), V3D(0.0, 0.0, -1.0)).matrix());
         m_kf->x().initGravityDir(V3D(0, 0, -1.0));
+        RCLCPP_WARN(m_logger, "IMU init: g=%.4f (acc_dev_max=%.4f) bg=[%.5f %.5f %.5f] acc_mean=[%.4f %.4f %.4f]",
+                    State::gravity, acc_dev.maxCoeff(),
+                    gyro_mean.x(), gyro_mean.y(), gyro_mean.z(),
+                    acc_mean.x(), acc_mean.y(), acc_mean.z());
     }
     else
         m_kf->x().initGravityDir(-acc_mean);

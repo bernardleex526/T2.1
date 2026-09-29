@@ -267,18 +267,17 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
     // ==================== 诊断代码开始 ====================
     auto total_end = std::chrono::high_resolution_clock::now();
     double total_time = std::chrono::duration<double, std::milli>(total_end - total_start).count();
-    
-    // 输出特征统计和性能信息
-    // RCLCPP_WARN(m_logger, 
-    //     "FEATURE_STATS: Total=%d, NeighborOK=%d(%.1f%%), PlaneOK=%d(%.1f%%), QualityOK=%d(%.1f%%)",
-    //     total_points, 
-    //     neighbor_success, 100.0 * neighbor_success / total_points,
-    //     plane_fit_success, 100.0 * plane_fit_success / total_points, 
-    //     quality_pass, 100.0 * quality_pass / total_points);
-        
-    // RCLCPP_WARN(m_logger,
-    //     "PERFORMANCE: TotalTime=%.2fms, AvgSearchTime=%.3fms/point, KDTreeSize=%zu", 
-    //     total_time, total_search_time/total_points, m_ikdtree->size());
+
+    // Diagnostics every 100 scans: point selection funnel.
+    {
+        static long loss_calls = 0;
+        if ((loss_calls % 100) == 0)
+            RCLCPP_WARN(m_logger,
+                        "FEATURE n=%ld total=%d neighborOK=%d planeOK=%d qualityOK=%d kdsize=%zu",
+                        loss_calls, total_points, neighbor_success, plane_fit_success,
+                        quality_pass, m_ikdtree->size());
+        ++loss_calls;
+    }
     // ==================== 诊断代码结束 ====================
 
     
