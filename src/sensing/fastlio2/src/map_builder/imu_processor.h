@@ -26,6 +26,9 @@ private:
     V3D m_last_gyro;
     M12D m_Q;
     IMUData m_last_imu;
+    // C2.1: scale applied to every accel sample consumed by the filter, measured once at
+    // initialization as 9.81/|mean accel of the init window| (1.0 when acc_normalize is off).
+    double m_acc_norm_scale = 1.0;
 
     rclcpp::Logger m_logger;
 };

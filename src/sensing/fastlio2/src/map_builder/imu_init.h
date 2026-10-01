@@ -15,6 +15,15 @@
 #include <algorithm>
 #include <limits>
 
+// How the init window is chosen (config: imu_init_mode).
+//   FirstBatch   - C2.2 / upstream FAST-LIO2: the whole first IMU batch, no static verdict.
+//   StaticWindow - historical fork logic below (also used for the legacy window_s <= 0 path).
+enum class ImuInitMode
+{
+    StaticWindow,
+    FirstBatch
+};
+
 struct ImuInitPlan
 {
     bool ready = false;          // initialize() may proceed with the window below
@@ -56,24 +65,44 @@ inline void imuWindowStats(const Vec<IMUData> &cache, size_t i0, size_t i1,
 }
 
 // Decides whether initialization can proceed and over which samples.
+//   FirstBatch mode (C2.2): ready as soon as the first batch holds min_samples samples; the
+//     window is the whole cache.  This is the upstream FAST-LIO2 behaviour (~0.1 s of IMU at
+//     400 Hz, no static verdict, no wait) that the fork replaced with the 3 s quiet window -
+//     which costs the first ~5 s of frames on a platform that is already moving and then
+//     injects v = 0 anyway via the max-wait fallback.
 //   static-window mode (window_s > 0): ready once a window of window_s is BOTH available in
 //     time and judged static (gyro std < static_gyro_std, accel deviation < static_acc_dev);
 //     after max_wait_s of buffered data it falls back to the QUIETEST window unconditionally.
-//   legacy mode (window_s <= 0): ready once legacy_init_num samples are buffered; the window
+//   legacy mode (window_s <= 0): ready once min_samples samples are buffered; the window
 //     is the whole cache.
 inline ImuInitPlan planImuInit(const Vec<IMUData> &cache, double window_s, double max_wait_s,
-                               double static_gyro_std, double static_acc_dev, int legacy_init_num)
+                               double static_gyro_std, double static_acc_dev, int min_samples,
+                               ImuInitMode mode = ImuInitMode::StaticWindow)
 {
     ImuInitPlan plan;
     const size_t n = cache.size();
     if (n == 0)
         return plan;
     plan.span = cache.back().time - cache.front().time;
+
+    if (mode == ImuInitMode::FirstBatch)
+    {
+        // use_static_window stays false: there is no quiet-window verdict here, and
+        // initialize() must not gate the measured-gravity adoption on one.
+        if (n < static_cast<size_t>(std::max(1, min_samples)))
+            return plan;
+        plan.i0 = 0;
+        plan.i1 = n;
+        plan.ready = true;
+        imuWindowStats(cache, plan.i0, plan.i1, &plan.gyro_std, &plan.acc_dev);
+        return plan;
+    }
+
     plan.use_static_window = window_s > 0.0;
 
     if (!plan.use_static_window)
     {
-        if (n < static_cast<size_t>(std::max(1, legacy_init_num)))
+        if (n < static_cast<size_t>(std::max(1, min_samples)))
             return plan;
         plan.i0 = 0;
         plan.i1 = n;

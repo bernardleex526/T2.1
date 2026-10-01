@@ -1,0 +1,4 @@
+# Ablation overlay: C2.1 + C2.2 together (the C2 hypothesis in full).
+imu_acc_normalize: true
+imu_init_mode: "first_batch"
+imu_init_min_samples: 40

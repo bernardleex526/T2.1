@@ -54,6 +54,15 @@ struct Config
     double imu_init_static_gyro_std = 0.005; // rad/s per axis
     double imu_init_static_acc_dev = 0.3;    // m/s^2 per axis deviation from window mean
     double imu_init_max_wait_s = 15.0;       // fall back to the quietest window after this
+    // C2.1 (frontend drift attribution, Phase C): upstream FAST-LIO2 rescales every averaged
+    // accel sample by 9.81/|mean accel of the init window|.  Off by default = the historical
+    // fork behaviour (adopt the measured magnitude into State::gravity, no rescaling).
+    bool acc_normalize = false;
+    // C2.2: "static_window" = the historical wait-for-a-quiet-3s-window logic above;
+    // "first_batch" = upstream style, initialise from the whole first IMU batch
+    // (init_min_samples samples, ~0.1 s at 400 Hz) with no static verdict and no waiting.
+    std::string init_mode = "static_window";
+    int init_min_samples = 40;
     int near_search_num = 5;
     int ieskf_max_iter = 5;
     bool gravity_align = true;

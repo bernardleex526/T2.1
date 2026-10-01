@@ -1,0 +1,5 @@
+# Generated simulation outputs (bags are hundreds of MB; regenerate with
+# simulation/scripts/run_eval_pipeline.sh or generate_test_bag.py)
+__pycache__/
+*.pyc
+synthetic_data/test_bag*/

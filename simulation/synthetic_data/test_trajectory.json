@@ -1,0 +1,63 @@
+{
+  "name": "synthetic_quadruped_rect_v1",
+  "description": "Predefined deterministic ground-truth trajectory for the FastLIO2 simulation harness. A quadruped trots in place (vibrating, non-rotating) for static_hold_s, then walks a closed, corner-rounded 10m x 10m rectangle at speed_mps. The route STARTS mid-edge (corner list begins at (7,2)) so the initial heading is the straight edge direction, and duration_s covers a FULL lap (40 m at 0.5 m/s = 80 s plus the 6 s hold), i.e. the body really returns to its start. IMU is derived from this same analytic motion (finite differences on a 1 kHz grid), so LiDAR poses and IMU are mutually consistent by construction; the gait vibration is added as a body-frame sensor artefact. This is the single source of truth consumed by generate_test_bag.py, scene_reference.py and check_trajectory.py.",
+  "t0_epoch_s": 1700000000.0,
+  "duration_s": 90.0,
+  "sensors": {
+    "imu_hz": 200.0,
+    "lidar_hz": 10.0,
+    "lidar_horizontal_beams": 640,
+    "lidar_vertical_beams": 48,
+    "lidar_vertical_fov_deg": [-25.0, 15.0],
+    "lidar_min_range_m": 0.5,
+    "lidar_max_range_m": 30.0,
+    "lidar_range_noise_std_m": 0.01,
+    "lidar_point_noise_std_m": 0.005,
+    "lidar_dropout_frac": 0.01
+  },
+  "body": {
+    "start_xyz": [7.0, 2.0, 0.5],
+    "static_hold_s": 6.0,
+    "speed_mps": 0.5,
+    "corner_smooth_m": 0.6,
+    "rectangle_corners_xy": [[7.0, 2.0], [12.0, 2.0], [12.0, 12.0], [2.0, 12.0], [2.0, 2.0]]
+  },
+  "gait": {
+    "bob_hz": 2.0,
+    "bob_amp_m": 0.01,
+    "attitude_hz": 1.0,
+    "roll_amp_deg": 1.0,
+    "pitch_amp_deg": 0.7,
+    "yaw_wobble_hz": 1.0,
+    "yaw_wobble_amp_deg": 0.5,
+    "vibration": [
+      {"hz": 12.0, "acc_amp_mps2": [0.0, 0.0, 1.5], "gyro_amp_rps": [0.02, 0.02, 0.0]},
+      {"hz": 18.0, "acc_amp_mps2": [1.0, 0.5, 0.0], "gyro_amp_rps": [0.0, 0.0, 0.03]},
+      {"hz": 26.0, "acc_amp_mps2": [0.0, 0.8, 0.8], "gyro_amp_rps": [0.03, 0.0, 0.0]}
+    ]
+  },
+  "imu_noise": {"accel_std_mps2": 0.03, "gyro_std_rps": 0.003, "seed": 20260930},
+  "fastlio2_init_expectation": {
+    "imu_init_window_s": 3.0,
+    "imu_init_static_gyro_std": 0.005,
+    "imu_init_static_acc_dev": 0.3,
+    "imu_init_max_wait_s": 5.0,
+    "note": "Mirrors config/lio.yaml. The trot-in-place prologue is deliberately NOT static (trot roll/pitch gives gyro_std ~0.08 rad/s and the gait vibration gives accel deviation ~1.7 m/s^2), so the C2.2 max-wait fallback is what must let initialization proceed; the measured |mean accel| stays ~9.81 m/s^2 so the C2.1 normalization is a no-op on this data (isolates the two effects)."
+  },
+  "scene": {
+    "room_box_min": [0.0, 0.0, 0.0],
+    "room_box_max": [14.0, 14.0, 3.0],
+    "pillars": [
+      {"center_xy": [5.0, 5.0], "radius_m": 0.25, "z_range": [0.0, 3.0]},
+      {"center_xy": [9.0, 5.0], "radius_m": 0.25, "z_range": [0.0, 3.0]},
+      {"center_xy": [5.0, 9.0], "radius_m": 0.25, "z_range": [0.0, 3.0]},
+      {"center_xy": [9.0, 9.0], "radius_m": 0.25, "z_range": [0.0, 3.0]}
+    ]
+  },
+  "notes": [
+    "Rectangle perimeter is 40 m, so one full lap takes 80 s at 0.5 m/s; duration_s = 90 s covers the 6 s hold plus a COMPLETE lap (the body returns to its start at t = 86 s).",
+    "Vibration is in 10-30 Hz per the quadruped gait spec; gyro stays quiet (<0.05 rad/s) which is exactly the B3 edge case: a vibrating but non-rotating platform, where the IMU-init max-wait fallback must fire.",
+    "The per-point time field is emitted relative to the FIRST EMITTED point and the message header is stamped at that same first-point emission time, matching Utils::pcl2_to_PCL (t0 = first range-filtered point) + syncPackage (cloud_end_time = header + last curvature).",
+    "Reference geometry, the support ROI and the ground-truth TUM are generated in THIS scene's own frame by scene_reference.py; no TUHH/MCD/HILTI reference map, ROI or transform is applied to any synthetic output."
+  ]
+}

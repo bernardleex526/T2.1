@@ -1,5 +1,69 @@
-.vscode
-build
-install
-log
-data/map_*
+# ==============================================================================
+# WP2 T2.1 Fork Git Ignore Rules
+# ==============================================================================
+
+# Build & install artifacts
+build/
+install/
+log/
+logs/
+
+# Local evaluation & verification artifacts (excluded from public submission)
+artifacts/
+.omp/
+
+# Datasets and raw data directories
+data/
+datasets/
+
+# Large sensor recordings, point clouds, trajectories & bags
+*.bag
+*.db3
+*.pcd
+*.tum
+*.ply
+*.las
+*.laz
+*.mcap
+
+# Log files and crash dumps
+*.log
+core
+core.*
+
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and IDE metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.directory
+
+# C/C++ compiler and tooling cache
+.cache/
+.clangd/
+.ccls-cache/
+
+# Secrets, private keys and environment configs
+*.pem
+*.key
+*.priv
+*.secret
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+.env
+.env.*
+!.env.example
+
+# Explicit inclusions for necessary test fixtures
+!simulation/synthetic_data/*.json

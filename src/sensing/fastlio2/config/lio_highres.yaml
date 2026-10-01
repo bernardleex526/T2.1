@@ -1,21 +1,30 @@
 # ============================================================================
-# lio_highres.yaml - high-precision profile for the T2.1 accuracy target
+# lio_highres.yaml - finer-voxel profile for the T2.1 accuracy target
 #                   (建图精度 <= 5 cm, 定位精度 <= 5 cm)
 # ============================================================================
-# This file is a drop-in alternative to config/lio.yaml. It changes ONLY the two
-# voxel-downsampling parameters; every other key is identical so the two profiles can
-# be swapped without behavioural surprises. The defaults in lio.yaml are NOT changed.
+# NOT a drop-in that only touches the voxels. Verified by loading both files, this profile
+# differs from config/lio.yaml at:
+#   scan_resolution   0.15 -> 0.05      map_resolution  0.3   -> 0.05
+#   lidar_filter_num  2    -> 3         det_range       100   -> 40
+#   na / ng           0.06 / 0.005 -> 0.1 / 0.1
+#   nba / nbg         8e-5 / 3e-6  -> 1e-4 / 1e-4
+#   imu_init_num      100  -> 20
+# and it OMITS imu_init_window_s / imu_init_static_gyro_std / imu_init_static_acc_dev /
+# imu_init_max_wait_s, so the static-window IMU initialisation that lio.yaml enables is
+# SILENTLY DISABLED here (imu_init_window_s defaults to 0.0 => legacy sample-count init,
+# imu_init.h). Switching profiles therefore also switches the initialisation policy.
+# The default profile (lio.yaml) is unchanged by this file.
 #
-# Why this file exists: lio.yaml ships scan_resolution 0.15 / map_resolution 0.3 m.
+# Why the finer voxels exist: lio.yaml ships scan_resolution 0.15 / map_resolution 0.3 m.
 #   * map_resolution is the ikd-Tree box-filter size (lidar_processor.cpp:7,
-#     set_downsample_param) and the quantization step of the coplanarity test
-#     (lidar_processor.cpp:135-140). A 0.3 m map voxel means map points are quantized to a
-#     0.3 m grid, which alone precludes ANY metre-sub-decimetre map-accuracy claim - the
+#     set_downsample_param) and the quantization step of the map-point voxel centroid
+#     (lidar_processor.cpp:134-153). A 0.3 m map voxel means map points are quantized to a
+#     0.3 m grid, which alone precludes ANY sub-decimetre map-accuracy claim - the
 #     quantization floor is an order of magnitude above the 5 cm target.
 #   * scan_resolution is the VoxelGrid leaf applied to each incoming scan
-#     (lidar_processor.cpp:16-18) and hence the spacing of the point cloud that is published
-#     as the body cloud and merged into the saved map (pgo saveMaps), so it also bounds the
-#     achievable map resolution.
+#     (lidar_processor.cpp:18 setLeafSize, :181-182 filter) and hence the spacing of the point
+#     cloud that is published as the body cloud and merged into the saved map (pgo saveMaps),
+#     so it also bounds the achievable map resolution.
 # Use this profile when 5 cm-class accuracy is being claimed or measured:
 #   ros2 run fastlio2 lio_node --ros-args -r __ns:=/mapping \
 #     -p config_path:=<install>/share/fastlio2/config/lio_highres.yaml
@@ -34,7 +43,7 @@
 #     map_resolution 0.1 first: it is already 3x finer than the shipped profile.
 # ----------------------------------------------------------------------------
 
-# --- identical to lio.yaml below this line except the two voxel parameters ---
+# --- below this line: same keys as lio.yaml, with the differences listed in the header ---
 imu_topic: /livox/imu
 lidar_topic: /livox/lidar
 body_frame: body

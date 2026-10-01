@@ -24,6 +24,13 @@ imu_init_window_s: 3.0
 imu_init_static_gyro_std: 0.005
 imu_init_static_acc_dev: 0.3
 imu_init_max_wait_s: 5.0
+# C2 ablation switches (imu_acc_normalize / imu_init_mode / imu_init_min_samples /
+# pcl2_filter_phase) are NOT set here: absent keys keep the historical behaviour (no accel
+# rescaling, wait-for-a-quiet-window init, PointCloud2 decimation from raw index 0 = upstream
+# `i % point_filter_num == 0`). They are experimental, unvalidated hypotheses
+# (04b73f5_controlled_ab_20260929/c2_frontend_attribution.json - the C2 replays have not been
+# run), so they live in the opt-in profile config/lio_c2_experimental.yaml and must never be
+# enabled by default.
 near_search_num: 5
 ieskf_max_iter: 5
 

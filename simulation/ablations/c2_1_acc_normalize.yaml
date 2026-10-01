@@ -1,0 +1,5 @@
+# Ablation overlay: C2.1 only -- upstream FAST-LIO2 accelerometer rescaling
+# (|acc_mean| of the init window is forced to 9.81 by rescaling every accel sample).
+# Flat top-level keys only; simulation-critical keys are untouched, so the launch's
+# fail-closed SIM_OVERRIDES check accepts this overlay.
+imu_acc_normalize: true

@@ -1,0 +1,174 @@
+{
+  "name": "synthetic_quadruped_triangle_loc_v1",
+  "description": "Second, SEPARATE ground-truth trajectory for the T3 localization test, in the SAME synthetic scene as test_trajectory.json but on a different closed route (a triangle) with a different start point. T3 runs the real localizer_node against the frozen scene-frame prior map over THIS trajectory, so the localization estimate is never the mapping run's odometry and the map was never built from this trajectory.",
+  "t0_epoch_s": 1700001000.0,
+  "duration_s": 60.0,
+  "sensors": {
+    "imu_hz": 200.0,
+    "lidar_hz": 10.0,
+    "lidar_horizontal_beams": 640,
+    "lidar_vertical_beams": 48,
+    "lidar_vertical_fov_deg": [
+      -25.0,
+      15.0
+    ],
+    "lidar_min_range_m": 0.5,
+    "lidar_max_range_m": 30.0,
+    "lidar_range_noise_std_m": 0.01,
+    "lidar_point_noise_std_m": 0.005,
+    "lidar_dropout_frac": 0.01
+  },
+  "body": {
+    "start_xyz": [
+      7.0,
+      3.0,
+      0.5
+    ],
+    "static_hold_s": 6.0,
+    "speed_mps": 0.5,
+    "corner_smooth_m": 0.6,
+    "rectangle_corners_xy": [
+      [
+        7.0,
+        3.0
+      ],
+      [
+        11.0,
+        3.0
+      ],
+      [
+        7.0,
+        11.0
+      ],
+      [
+        3.0,
+        3.0
+      ]
+    ]
+  },
+  "gait": {
+    "bob_hz": 2.0,
+    "bob_amp_m": 0.01,
+    "attitude_hz": 1.0,
+    "roll_amp_deg": 1.0,
+    "pitch_amp_deg": 0.7,
+    "yaw_wobble_hz": 1.0,
+    "yaw_wobble_amp_deg": 0.5,
+    "vibration": [
+      {
+        "hz": 12.0,
+        "acc_amp_mps2": [
+          0.0,
+          0.0,
+          1.5
+        ],
+        "gyro_amp_rps": [
+          0.02,
+          0.02,
+          0.0
+        ]
+      },
+      {
+        "hz": 18.0,
+        "acc_amp_mps2": [
+          1.0,
+          0.5,
+          0.0
+        ],
+        "gyro_amp_rps": [
+          0.0,
+          0.0,
+          0.03
+        ]
+      },
+      {
+        "hz": 26.0,
+        "acc_amp_mps2": [
+          0.0,
+          0.8,
+          0.8
+        ],
+        "gyro_amp_rps": [
+          0.03,
+          0.0,
+          0.0
+        ]
+      }
+    ]
+  },
+  "imu_noise": {
+    "accel_std_mps2": 0.03,
+    "gyro_std_rps": 0.003,
+    "seed": 20260931
+  },
+  "fastlio2_init_expectation": {
+    "imu_init_window_s": 3.0,
+    "imu_init_static_gyro_std": 0.005,
+    "imu_init_static_acc_dev": 0.3,
+    "imu_init_max_wait_s": 5.0,
+    "note": "Same B3 edge case as the mapping trajectory: the trot-in-place prologue is not judged static, so the max-wait fallback fires."
+  },
+  "scene": {
+    "room_box_min": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "room_box_max": [
+      14.0,
+      14.0,
+      3.0
+    ],
+    "pillars": [
+      {
+        "center_xy": [
+          5.0,
+          5.0
+        ],
+        "radius_m": 0.25,
+        "z_range": [
+          0.0,
+          3.0
+        ]
+      },
+      {
+        "center_xy": [
+          9.0,
+          5.0
+        ],
+        "radius_m": 0.25,
+        "z_range": [
+          0.0,
+          3.0
+        ]
+      },
+      {
+        "center_xy": [
+          5.0,
+          9.0
+        ],
+        "radius_m": 0.25,
+        "z_range": [
+          0.0,
+          3.0
+        ]
+      },
+      {
+        "center_xy": [
+          9.0,
+          9.0
+        ],
+        "radius_m": 0.25,
+        "z_range": [
+          0.0,
+          3.0
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "The scene (room box + pillars) is byte-identical to test_trajectory.json so the frozen prior map generated from that scene applies unchanged.",
+    "Route: closed triangle (7,3) -> (11,3) -> (7,11) -> (3,3) -> (7,3); perimeter ~25.9 m; duration 60 s covers the 6 s hold plus a complete lap. It starts mid-edge so the initial heading is the straight edge direction (yaw 0).",
+    "The initial pose for the relocalize service is the trajectory definition's start pose (a declared placement of the robot in the scene), not a GT measurement of this run."
+  ]
+}

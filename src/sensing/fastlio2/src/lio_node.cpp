@@ -39,6 +39,10 @@ struct NodeConfig
     // PointCloud2 模式下的每点时间字段适配
     std::string pcl2_time_field = "";   // 为空则不做扫描内运动补偿
     double pcl2_time_scale = 1.0;       // 字段值×该系数 = 偏移秒(Velodyne time=1.0)
+    // C2.3 抽样相位(仅 PointCloud2 路径)：抽稀起点索引 mod lidar_filter_num。
+    // 0(默认) = 取 i % lidar_filter_num == 0，与上游 FAST-LIO2 一致、行为不变；实验开关，
+    // 未验证，只有 opt-in 的 lio_c2_experimental.yaml 会设置它。
+    int pcl2_filter_phase = 0;
 };
 
 struct StateData
@@ -128,7 +132,7 @@ private:
                 rclcpp::SensorDataQoS(),
                 std::bind(&LIONode::lidarPcl2CB, this, std::placeholders::_1),
                 sub_options);
-            RCLCPP_INFO(this->get_logger(), "LiDAR type: pointcloud2 (generic), time_field='%s'", m_node_config.pcl2_time_field.c_str());
+            RCLCPP_INFO(this->get_logger(), "LiDAR type: pointcloud2 (generic), time_field='%s', filter_num=%d, filter_phase=%d", m_node_config.pcl2_time_field.c_str(), m_builder_config.lidar_filter_num, m_node_config.pcl2_filter_phase);
         }
 
         m_image_sub = this->create_subscription<sensor_msgs::msg::Image>(
@@ -203,6 +207,9 @@ private:
             m_node_config.print_time_cost = config["print_time_cost"] ? config["print_time_cost"].as<bool>() : m_node_config.print_time_cost;
             m_node_config.pcl2_time_field = config["pcl2_time_field"] ? config["pcl2_time_field"].as<std::string>() : m_node_config.pcl2_time_field;
             m_node_config.pcl2_time_scale = config["pcl2_time_scale"] ? config["pcl2_time_scale"].as<double>() : m_node_config.pcl2_time_scale;
+            // C2.3 sampling phase (PointCloud2 decimation): flat key, same convention as the
+            // pcl2_* keys above.  Absent key keeps 0 = upstream `i % point_filter_num == 0`.
+            if (config["pcl2_filter_phase"]) m_node_config.pcl2_filter_phase = config["pcl2_filter_phase"].as<int>();
 
             // MapBuilder配置
             if (config["lidar_filter_num"]) m_builder_config.lidar_filter_num = config["lidar_filter_num"].as<int>();
@@ -223,6 +230,19 @@ private:
             if (config["imu_init_static_gyro_std"]) m_builder_config.imu_init_static_gyro_std = config["imu_init_static_gyro_std"].as<double>();
             if (config["imu_init_static_acc_dev"]) m_builder_config.imu_init_static_acc_dev = config["imu_init_static_acc_dev"].as<double>();
             if (config["imu_init_max_wait_s"]) m_builder_config.imu_init_max_wait_s = config["imu_init_max_wait_s"].as<double>();
+            // C2 ablation switches (Phase C frontend drift attribution).  Flat top-level keys,
+            // same convention as every key above; absent keys keep the historical behaviour
+            // (Config defaults: no accel rescaling, wait-for-a-quiet-window init).  They are
+            // experimental and unvalidated, so config/lio.yaml does not set them - the opt-in
+            // profile config/lio_c2_experimental.yaml does.
+            if (config["imu_acc_normalize"]) m_builder_config.acc_normalize = config["imu_acc_normalize"].as<bool>();
+            if (config["imu_init_mode"]) {
+                m_builder_config.init_mode = config["imu_init_mode"].as<std::string>();
+                if (m_builder_config.init_mode != "first_batch" && m_builder_config.init_mode != "static_window")
+                    RCLCPP_WARN(this->get_logger(), "Unknown imu_init_mode '%s', using static_window",
+                                m_builder_config.init_mode.c_str());
+            }
+            if (config["imu_init_min_samples"]) m_builder_config.init_min_samples = config["imu_init_min_samples"].as<int>();
             if (config["near_search_num"]) m_builder_config.near_search_num = config["near_search_num"].as<int>();
             if (config["ieskf_max_iter"]) m_builder_config.ieskf_max_iter = config["ieskf_max_iter"].as<int>();
             if (config["gravity_align"]) m_builder_config.gravity_align = config["gravity_align"].as<bool>();
@@ -333,7 +353,7 @@ private:
     // 通用 PointCloud2 雷达接入(Velodyne / Ouster / RoboSense 等发布 PointCloud2 的雷达)
     void lidarPcl2CB(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
-        CloudType::Ptr cloud = Utils::pcl2_to_PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range, m_node_config.pcl2_time_field, m_node_config.pcl2_time_scale);
+        CloudType::Ptr cloud = Utils::pcl2_to_PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range, m_node_config.pcl2_time_field, m_node_config.pcl2_time_scale, m_node_config.pcl2_filter_phase);
         std::lock_guard<std::mutex> lock(m_state_data.lidar_mutex);
         double timestamp = Utils::getSec(msg->header);
         if (timestamp < m_state_data.last_lidar_time)

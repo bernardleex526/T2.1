@@ -13,6 +13,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(interface REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 
 add_executable(map_pose_publisher
@@ -25,7 +28,11 @@ ament_target_dependencies(map_pose_publisher
   nav_msgs
   tf2_ros
   tf2_geometry_msgs
+  diagnostic_msgs
+  interface
 )
+
+target_link_libraries(map_pose_publisher Eigen3::Eigen)
 
 install(TARGETS
   map_pose_publisher
@@ -42,6 +49,20 @@ ament_export_dependencies(
 
 
 if(BUILD_TESTING)
+  # Interface regression: the published stamp must be the stamp of the transform tf2 actually
+  # resolved (a PAST common time), never the node clock - see test_map_pose_stamp.cpp.
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_map_pose_stamp test/test_map_pose_stamp.cpp)
+  target_include_directories(test_map_pose_stamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_target_dependencies(test_map_pose_stamp rclcpp geometry_msgs tf2_ros)
+
+  # Current-pose mode: composition, the odometry's own stamp, stale-odometry unavailability, the
+  # separately exposed correction age/validity, and the bounded prediction/regression surface.
+  ament_add_gtest(test_map_pose_current test/test_map_pose_current.cpp)
+  target_include_directories(test_map_pose_current PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_target_dependencies(test_map_pose_current geometry_msgs nav_msgs)
+  target_link_libraries(test_map_pose_current Eigen3::Eigen)
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

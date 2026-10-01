@@ -1,0 +1,5 @@
+# Ablation overlay: C2.2 only -- upstream FAST-LIO2 first-batch IMU initialisation
+# (no static-window verdict, no waiting: initialise from the first imu_init_min_samples
+# samples of the buffer).
+imu_init_mode: "first_batch"
+imu_init_min_samples: 40

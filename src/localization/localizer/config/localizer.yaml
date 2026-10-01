@@ -10,7 +10,7 @@ update_hz: 2.0
 # Leaving both empty is a configuration error: localizer_node now logs a FATAL message
 # explaining how to set it and exits(1), instead of dying with a YAML::TypedBadConversion
 # (the key used to be absent from this file entirely).
-# Example: pcd_path: "/home/lee/t21_wp2/reports/maps/map.pcd"
+# Example: pcd_path: "/path/to/maps/map.pcd"
 pcd_path: ""
 
 # Two-stage ICP.  *_score_thresh is the MEAN SQUARED nearest-neighbour distance over the
@@ -28,7 +28,14 @@ rough_min_inlier_ratio: 0.2
 
 refine_scan_resolution: 0.1
 refine_map_resolution: 0.1
-refine_max_iteration: 15
+# MEASURED TRADEOFF (2026-09-30, T3 harness): 15 -> 8 halves the refine stage (130 ms -> 68 ms
+# per update, mean align 160 ms -> 102 ms) and lifts the localizer to the configured 10.0 Hz
+# distinct-stamp rate with no accuracy loss on the T3 route (ATE 3.13 cm at 8 vs 3.22 cm at 15
+# on the identical inputs) and within the 5 cm criterion on a HELD-OUT route with an
+# independently built prior (4.14 cm, 10.1 Hz, MEASURED).  The rough stage in this same file
+# already uses 8.  Revert to 15 if deployment margin is preferred over rate; both values are
+# inside the verified range and no gate threshold depends on the iteration count.
+refine_max_iteration: 8
 refine_score_thresh: 0.02
 refine_max_corr_dist: 0.15
 refine_min_inlier_ratio: 0.2
@@ -38,9 +45,25 @@ refine_min_inlier_ratio: 0.2
 # last accepted RAW one must stay below these bounds, otherwise the update is rejected.
 # After gate_max_consecutive_rejects rejections the lock is declared INVALID, re-seeded on the
 # current candidate and gating continues; gate_recovery_accepts consecutive accepted updates
-# then report it valid again (no service call needed).
+# then report it valid again (no service call needed).  The FIRST unattended lock follows the
+# same rule: its candidate only seeds the tracking reference, and gate_recovery_accepts
+# consecutive accepted updates are required before the lock is reported valid and the map<-odom
+# transform is first published.  An operator relocalize is valid immediately.
 gate_max_translation_m: 0.04
 gate_max_angle_rad: 0.03
 gate_max_consecutive_rejects: 10
 gate_recovery_accepts: 10
 gate_ema_alpha: 0.1
+
+# How long the last CORROBORATED correction stays evidence that the lock is alive: an accepted
+# candidate under a valid lock, an explicit relock, or a completed (first or post-loss)
+# qualification.  A failed ICP attempt, a rejected candidate and a not-yet-qualified first lock
+# renew nothing.  relocalize_check answers from the gate state, and the gate only changes when
+# an update arrives, so without this bound a node whose intake has stalled would keep answering
+# "valid" forever.  Default: ten nominal update periods.
+validity_timeout_s: 1.0
+
+# Periodic INFO report of the achieved update rate, the synced-frame count and the age of the
+# last ICP attempt - so a CPU-bound or stalled localizer is visible in its own log instead of
+# only in the timing of its output stream.  0 disables it.
+report_period_s: 10.0

@@ -17,7 +17,7 @@
 //            for commercial purposes, and you may only distribute the resulting
 //            work under the same license if you alter, transform, or create the
 //            work."  NON-COMMERCIAL USE ONLY -- see
-//            /home/lee/t21_wp2/reports/step12_scancontext_gicp.md section
+//            reports/step12_scancontext_gicp.md section
 //            "Provenance and licensing" for the consequences for this fork.
 // sha256   : 2e8443fa8ff7eeeb707840455e34d78072a375c09361e78c485c58714030dd35
 // Local modifications, all confined to Scancontext.h:

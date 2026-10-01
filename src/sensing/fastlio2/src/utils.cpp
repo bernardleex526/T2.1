@@ -27,7 +27,7 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driv
     return cloud;
 }
 
-pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range, double max_range, const std::string &time_field, double time_scale)
+pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range, double max_range, const std::string &time_field, double time_scale, int filter_phase)
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZINormal>);
     // 按字段名定位字节偏移
@@ -64,7 +64,17 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
 
     std::size_t point_step = msg->point_step;
     std::size_t point_num = msg->width * msg->height;
-    cloud->reserve(point_num / std::max(1, filter_num) + 1);
+    const int stride_i = std::max(1, filter_num);
+    const std::size_t stride = static_cast<std::size_t>(stride_i);
+    // Sampling phase (C2.3): start the stride at `filter_phase` instead of 0, i.e. keep the raw
+    // indices i with (i - phase) % stride == 0.  phase 0 (the default) is byte-identical to the
+    // historical/upstream `i % point_filter_num == 0`.  The offset is folded into [0, stride) so
+    // any configured value is well defined; it changes only WHICH points of the same message are
+    // kept (and, because t0 below is the first RETAINED point's time, by how much the per-point
+    // times are rebased).
+    const int phase_folded = ((filter_phase % stride_i) + stride_i) % stride_i;
+    const std::size_t start = static_cast<std::size_t>(phase_folded);
+    cloud->reserve(point_num / stride + 1);
     double t0_sec = 0.0;
     bool t0_set = false;
     auto read_float = [&](std::size_t base, int off) -> float
@@ -82,7 +92,7 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
         return static_cast<double>((*reinterpret_cast<const float *>(p)) * static_cast<float>(time_scale));
     };
 
-    for (std::size_t i = 0; i < point_num; i += std::max(1, filter_num))
+    for (std::size_t i = start; i < point_num; i += stride)
     {
         std::size_t base = i * point_step;
         float x = read_float(base, off_x);

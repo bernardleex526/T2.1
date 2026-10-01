@@ -148,11 +148,20 @@ def generate_launch_description():
         }.items(),
     )
     ## 静态TF转换节点（body→base_link），外参可配置
+    # 使用 Humble 支持的具名参数（--x/--y/--z/--roll/--pitch/--yaw/--frame-id/--child-frame-id）。
+    # 位置参数形式是 `x y z yaw pitch roll parent child`：旧写法按 `x y z yaw roll pitch` 传入，
+    # 把 body_base_roll 放进了 pitch 槽、body_base_pitch 放进了 roll 槽。默认全 0 时不可见，
+    # 一旦传入非零安装倾角就会发布错误（roll/pitch 互换）的 body→base_link 旋转。
+    # 具名参数与顺序无关，从根上消除该歧义。
     static_tf_node = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
         name="body_to_base_link_tf",
-        arguments=[body_base_x, body_base_y, body_base_z, body_base_yaw, body_base_roll, body_base_pitch, "body", "base_link"],
+        arguments=[
+            "--x", body_base_x, "--y", body_base_y, "--z", body_base_z,
+            "--roll", body_base_roll, "--pitch", body_base_pitch, "--yaw", body_base_yaw,
+            "--frame-id", "body", "--child-frame-id", "base_link",
+        ],
         output="screen"
     )
     ## 位姿输出节点

@@ -25,7 +25,7 @@ find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(message_filters REQUIRED)
+
 find_package(tf2_ros REQUIRED)
 find_package(interface REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -46,7 +46,7 @@ set(SRC_LIST src/localizers/commons.cpp
              src/localizers/icp_localizer.cpp)
 
 add_executable(localizer_node src/localizer_node.cpp ${SRC_LIST})
-ament_target_dependencies(localizer_node rclcpp std_msgs sensor_msgs nav_msgs message_filters pcl_conversions tf2_ros geometry_msgs interface)
+ament_target_dependencies(localizer_node rclcpp std_msgs sensor_msgs nav_msgs pcl_conversions tf2_ros geometry_msgs interface)
 target_link_libraries(localizer_node ${PCL_LIBRARIES}  yaml-cpp) 
 
 
@@ -64,6 +64,14 @@ if(BUILD_TESTING)
   target_include_directories(test_localizer_gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   ament_target_dependencies(test_localizer_gate pcl_conversions)
   target_link_libraries(test_localizer_gate ${PCL_LIBRARIES})
+
+  # Intake and lock-validity regressions: the pairing must never stop delivering pairs while
+  # both streams are live, and a stalled intake must stop answering valid.  Neither test needs
+  # ROS or PCL - they pin behaviour, not wiring.
+  ament_add_gtest(test_pair_cache test/test_pair_cache.cpp)
+  target_include_directories(test_pair_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_add_gtest(test_lock_validity test/test_lock_validity.cpp)
+  target_include_directories(test_lock_validity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

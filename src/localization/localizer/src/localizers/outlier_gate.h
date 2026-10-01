@@ -20,8 +20,8 @@
 //     individually plausible updates ends up rejected - and since a rejection never updated
 //     the reference, the gate became absorbing.
 //  3. Rejection is bounded AND the gate stays active while the lock is degraded.  After
-//     max_consecutive_rejects the gate reports `lost`, re-seeds its reference (and the
-//     published transform) on the candidate, and reports the lock INVALID - but it keeps
+//     max_consecutive_rejects the gate reports `lost`, re-seeds its tracking reference on the
+//     candidate, and reports the lock INVALID - but it keeps
 //     gating against the new reference, and after recovery_accepts consecutive accepted
 //     updates it reports `recovered` so the caller can say valid again.  The "not valid"
 //     state must not be interpreted as "bypass the gate": doing that left the gate disabled
@@ -34,6 +34,13 @@
 //     relocalize_check - so it stays at the last trusted value while the lock is degraded and
 //     is released (snapped, not blended) only when the lock is valid again.  Callers that must
 //     follow the tracker (e.g. to seed the next ICP) use reference_*(), not published_*().
+//  5. The FIRST unattended lock owes the same corroboration as a post-loss re-seed.  It used to
+//     adopt AND publish the first ICP result outright, which made one unconfirmed measurement
+//     both the published map<-odom transform and - with the node renewing its freshness bound on
+//     it - a "valid" answer from relocalize_check.  The first candidate now only seeds the
+//     tracking reference and puts the lock in the same await-recovery state, so it is published
+//     and reported valid by the same recovery_accepts consecutive accepted updates.  An operator
+//     relocalize is the one exception: it is corroboration by itself and locks immediately.
 //
 // Time-discrete by construction: dt is the time between ICP updates, and the thresholds are
 // per-update innovation bounds (they do not scale with dt because the odometry is the
@@ -65,9 +72,19 @@ struct OffsetGateOutcome
     bool locked = false;       // adopted unconditionally: first lock or an operator relocalize
     bool lost = false;         // bounded recovery triggered: caller must report invalid
     bool recovered = false;    // lock trustworthy again after a lost event: report valid
+    bool valid = false;        // the lock state after this update (see corroborated())
     double innovation_m = 0.0; // body-position innovation of this candidate [m]
     double innovation_rad = 0.0;
     int consecutive_rejects = 0;
+
+    // Does this update CORROBORATE the lock, i.e. may the caller renew the freshness bound of
+    // its lock-validity answer with it?  True only when the gate accepted the candidate while
+    // the lock is valid: an accepted candidate under a valid lock, an operator relock, or a
+    // completed (first or post-loss) qualification.  A failed ICP attempt and a rejected or
+    // not-yet-qualified update corroborate nothing, so they must not renew the bound - a stream
+    // of them would otherwise keep a dead lock answering "valid" forever, which is the defect
+    // the bound exists to prevent.
+    bool corroborated() const { return accepted && valid; }
 };
 
 class OffsetOutlierGate
@@ -76,9 +93,11 @@ public:
     OffsetOutlierGate() = default;
     explicit OffsetOutlierGate(const OffsetGateConfig &cfg) : m_cfg(cfg) {}
 
-    // Adopt the candidate unconditionally as reference AND published transform (first lock, or
-    // an operator relocalize).  Does NOT make the lock valid by itself: only a service_request
-    // update or a completed recovery does.
+    // Adopt the candidate unconditionally as reference AND published transform.  This is the
+    // operator path (a relocalize / initial-pose request) and the test entry point; an
+    // UNATTENDED first lock does NOT go through here (see update(): it must not publish, and it
+    // must earn its validity).  Does NOT make the lock valid by itself: update() does that for a
+    // service_request, and the completed recovery edge does it for everything else.
     void reset(const M3D &r, const V3D &t)
     {
         m_engaged = true;
@@ -120,21 +139,45 @@ public:
     //         the two offsets directly, which is the same angle their body poses differ by
     //         (angularDistance(cand_r*body_r, raw_r*body_r) == angularDistance(cand_r, raw_r)).
     // service_request: a relocalize/convergence request is pending (operator forced a new lock).
-    // The reported lifecycle is: !engaged -> first candidate locks (not valid until a service
-    // request); service_request -> unconditional adopt + valid; accepted -> gated, keeps valid;
-    // rejected x max_consecutive_rejects -> lost (NOT valid, but still gating on the re-seeded
-    // reference); then recovery_accepts consecutive accepted updates -> recovered (valid).
+    // The reported lifecycle is: !engaged -> the first candidate seeds the tracking reference and
+    // enters the recovery state (NOT valid, published transform NOT released) until
+    // recovery_accepts consecutive accepted updates have corroborated it; service_request ->
+    // unconditional adopt + published + valid immediately (the operator is the corroboration);
+    // accepted -> gated, keeps valid; rejected x max_consecutive_rejects -> lost (NOT valid, but
+    // still gating on the re-seeded reference); then recovery_accepts consecutive accepted
+    // updates -> recovered (valid, published transform released).
     OffsetGateOutcome update(const M3D &cand_r, const V3D &cand_t, const V3D &body_t,
                              bool service_request = false)
     {
         OffsetGateOutcome out;
         if (!m_engaged || service_request)
         {
-            reset(cand_r, cand_t);
+            if (service_request)
+            {
+                // Operator relocalize: the operator vouched for the pose, so adopting it and
+                // publishing it is corroborated by construction - no streak is owed.
+                reset(cand_r, cand_t);
+                m_valid = true;
+            }
+            else
+            {
+                // FIRST unattended lock.  The candidate becomes the tracking reference, but it is
+                // NOT published and NOT valid: one ICP result is exactly the evidence that used
+                // to teleport the published transform, and relocalize_check must not answer valid
+                // on a single unconfirmed measurement.  The lock enters the same await-recovery
+                // state a lost lock re-seeds into, so the SAME rule qualifies it: recovery_accepts
+                // consecutive accepted updates against this reference.
+                m_engaged = true;
+                m_raw_r = cand_r;
+                m_raw_t = cand_t;
+                m_awaiting_recovery = true;
+                m_valid = false;
+                m_accepts = 0;
+                m_rejects = 0;
+            }
             out.accepted = true;
             out.locked = true;
-            if (service_request)
-                m_valid = true;
+            out.valid = m_valid;
             return out;
         }
         const V3D cand_body = cand_r * body_t + cand_t;
@@ -191,6 +234,7 @@ public:
             }
         }
         out.consecutive_rejects = m_rejects;
+        out.valid = m_valid;
         return out;
     }
 

@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <pcl/io/pcd_io.h>
 #include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/search/kdtree.h>
 #include <pcl/registration/icp.h>
 #include <pcl/filters/voxel_grid.h>
 
@@ -41,6 +42,18 @@ public:
     CloudType::Ptr roughMap() { return m_rough_tgt; }
     CloudType::Ptr refineMap() { return m_refine_tgt; }
 
+    // Where an align() call actually spends its time.  Reported by the node so the achievable
+    // output rate is a measured number instead of a guess.
+    struct StageTimings
+    {
+        double rough_align_ms = 0.0;
+        double rough_fitness_ms = 0.0;
+        double refine_align_ms = 0.0;
+        double refine_fitness_ms = 0.0;
+        size_t align_calls = 0;
+    };
+    const StageTimings &stageTimings() const { return m_timings; }
+
 
 private:
     ICPConfig m_config;
@@ -51,9 +64,11 @@ private:
     CloudType::Ptr m_rough_inp;
     CloudType::Ptr m_refine_tgt;
     CloudType::Ptr m_rough_tgt;
-    // Nearest-neighbour indices of the two target maps, built once in loadMap: the fitness and
-    // inlier-ratio measurement in align() needs them on every update.
-    pcl::KdTreeFLANN<PointType> m_refine_tree;
-    pcl::KdTreeFLANN<PointType> m_rough_tree;
+    // Nearest-neighbour index of each target map, built once in loadMap and shared with the
+    // ICPs (they are told not to recompute it), so one update pays for neither a rebuild nor a
+    // second index.
+    pcl::search::KdTree<PointType>::Ptr m_refine_tree;
+    pcl::search::KdTree<PointType>::Ptr m_rough_tree;
     std::string m_pcd_path;
+    StageTimings m_timings;
 };

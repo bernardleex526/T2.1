@@ -94,6 +94,16 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_imu_init pcl_conversions)
   target_link_libraries(test_imu_init ${PCL_LIBRARIES})
 
+  # Behavioural regression of the LiDAR frontend converters (src/utils.cpp): the livox2PCL
+  # tag/line/range/stride selection and the pcl2_to_PCL decimation phase (C2.3, opt-in
+  # `pcl2_filter_phase`) with the per-point time origin of each retained set.  Only the returned
+  # clouds are inspected, never source text.
+  ament_add_gtest(test_utils_preprocess test/test_utils_preprocess.cpp src/utils.cpp)
+  target_include_directories(test_utils_preprocess PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                          ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(test_utils_preprocess pcl_conversions sensor_msgs livox_ros_driver2)
+  target_link_libraries(test_utils_preprocess ${PCL_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

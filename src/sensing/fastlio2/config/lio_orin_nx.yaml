@@ -1,0 +1,107 @@
+# ============================================================================
+# lio_orin_nx.yaml - Orin NX deployment profile (LiDAR: Airy; quadruped platform)
+# ============================================================================
+# STATUS: unvalidated deployment starting point. NO value in this file was measured on the
+# target robot: the repository has no Airy/Odin1 driver, no target bag and no board run, so
+# neither the T2.1 5 cm-class accuracy targets nor any "already fixed" claim may be attached
+# to this profile. Every sensor-dependent number below must be re-derived on the target.
+#
+# Loading: flat schema, read by lio_node.cpp loadParameters() -> YAML::LoadFile(config_path):
+#   ros2 run fastlio2 lio_node --ros-args -p config_path:=<...>/lio_orin_nx.yaml
+#
+# SCHEMA NOTE: this fork reads FLAT top-level keys only - no nested groups and no aliases.
+# The deployment spec was written in upstream FAST-LIO (laserMapping.cpp) naming, which uses
+# common/mapping/preprocess/publish groups that lio_node does NOT read. The mapping applied:
+#   common.lid_topic                  -> lidar_topic
+#   common.imu_topic                  -> imu_topic
+#   common.time_sync_en / time_offset_lidar_to_imu
+#                                     -> no consumer in this repo (see TIME_SYNC_NOTES.md)
+#   preprocess.point_filter_num       -> lidar_filter_num
+#   mapping.filter_size_surf          -> scan_resolution
+#   mapping.filter_size_map           -> map_resolution
+#   mapping.cube_side_length          -> cube_len
+#   mapping.acc_cov/gyr_cov           -> na / ng
+#   mapping.b_acc_cov/b_gyr_cov       -> nba / nbg
+#   extrinsic_est_en                  -> esti_il
+#   extrinsic_T / extrinsic_R         -> ext_il (deliberately NOT set here, see below)
+#   mapping.acc_normalize / imu_init_mode
+#                                     -> optional C2 ablation keys (imu_acc_normalize /
+#                                        imu_init_mode); NOT set here, they are experimental
+#                                        and live in config/lio_c2_experimental.yaml
+#   publish.*                         -> no consumer in lio_node: the body/scan cloud and the
+#                                        path are published unconditionally (the only related
+#                                        switch is point_quality_thresh, below)
+#
+# SENSOR IDENTITY: Airy and Odin1 are NOT Livox products, so the Livox CustomMsg path
+# (lidar_type: livox), the Livox driver and that driver's own time-sync options do not apply
+# to them. The topic below is the RoboSense driver's default name, which is why this profile
+# takes the generic PointCloud2 path. [INFERENCE from the topic name only - confirm the vendor
+# driver, the message type and the per-point time field against the vendor documentation
+# before the first run.]
+# ============================================================================
+
+# --- interfaces (spec: common.*) ---
+imu_topic: /imu/data
+lidar_topic: /rslidar_points
+body_frame: body
+world_frame: odom
+print_time_cost: false
+
+# --- front-end input / preprocess (spec: preprocess.*) ---
+lidar_type: pointcloud2
+lidar_max_line: 4          # unused in pointcloud2 mode (livox CustomMsg path only)
+lidar_filter_num: 2
+lidar_min_range: 0.5
+lidar_max_range: 30.0
+# Per-point time field of the PointCloud2. Airy/Odin1 per-point time (name, datatype, units,
+# relative-vs-absolute epoch) is NOT verified here, so the profile keeps it empty, which means
+# NO in-scan motion compensation: a moving quadruped will show layered/serrated cloud. Fill
+# both keys only after verifying the field (utils.cpp:98-112; TIME_SYNC_NOTES.md).
+pcl2_time_field: ""
+pcl2_time_scale: 1.0
+# The spec gives no IMU unit. 1.0 assumes the IMU already reports m/s^2; a MID360-style built-in
+# IMU reports ~g and needs 10.0 (the code default). Kept explicit so the assumption is visible
+# instead of hidden behind the default - verify by comparing the static mean |a| against 9.81.
+imu_acc_scale: 1.0
+
+# --- mapping / IESKF (spec: mapping.*) ---
+# Note: filter_size_surf 0.3 m quantizes map points to a 0.3 m grid, which by itself precludes
+# any sub-decimetre map-accuracy claim (see the lio_highres.yaml header). It is the spec value,
+# not a measured one.
+scan_resolution: 0.3       # spec filter_size_surf
+map_resolution: 0.3        # spec filter_size_map
+cube_len: 200.0            # spec cube_side_length
+det_range: 30.0
+move_thresh: 1.5
+
+na: 0.1                    # spec acc_cov
+ng: 0.01                   # spec gyr_cov
+nba: 0.0001                # spec b_acc_cov
+nbg: 0.0001                # spec b_gyr_cov
+
+# --- IMU init (legacy static-window path; the C2 switches are NOT enabled here) ---
+imu_init_num: 40
+imu_init_window_s: 3.0
+imu_init_static_gyro_std: 0.005
+imu_init_static_acc_dev: 0.3
+imu_init_max_wait_s: 5.0
+
+near_search_num: 5
+ieskf_max_iter: 5
+gravity_align: true
+esti_il: false             # spec extrinsic_est_en: fixed extrinsic, so a calibration error goes
+                           # straight into the map (see ext_il below)
+point_quality_thresh: 0.9
+
+# --- extrinsic (spec extrinsic_T / extrinsic_R): INTENTIONALLY NOT SET ---
+# t_il/R_il is a measured mounting quantity and no calibration exists for this platform. An
+# earlier revision of this file carried [0.020, 0.000, 0.037, 1.0, 0.0, 0.0, 0.0]; that value
+# was copied from the MCD replay config, i.e. from a DIFFERENT LiDAR/IMU pair, and is not an
+# Airy extrinsic. With the key absent, loadParameters() logs "Missing or invalid ext_il
+# parameter, using defaults" and the estimator runs with r_il = I, t_il = 0 - a loud
+# placeholder, not a valid deployment extrinsic. Measure it on the target first:
+# yaml order [x y z qx qy qz qw], internal Quaterniond(w,x,y,z), semantics
+# p_imu = R_il * p_lidar + t_il.
+#   ext_il: [<x>, <y>, <z>, <qx>, <qy>, <qz>, <qw>]
+
+lidar_cov_inv: 1000.0

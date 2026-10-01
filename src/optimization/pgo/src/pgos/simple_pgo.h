@@ -35,6 +35,43 @@ struct LoopPair
     double score;
 };
 
+namespace pgo_experiment
+{
+struct CandidateAudit
+{
+    size_t source_id = 0;
+    size_t target_id = 0;
+    std::string detector;
+    std::string sel_seed;
+    M3D r_offset = M3D::Identity();
+    V3D t_offset = V3D::Zero();
+    double rel_t = 0.0;
+    double corr = 0.0;
+    double corr_allowance = 0.0;
+    double dyaw = 0.0;
+    double prior_yaw = 0.0;
+    double init_yaw = 0.0;
+    double prior_t = 0.0;
+    bool coarse_conv = false;
+    double coarse_rmse = 0.0;
+    bool fine_conv = false;
+    double fine_rmse = 0.0;
+    double fine_plane_rmse = 0.0;
+    double inlier_rmse = 0.0;
+    double overlap = 0.0;
+    double overlap_2 = 0.0;
+    double overlap_3 = 0.0;
+    size_t n_corr = 0;
+    size_t n_source = 0;
+    double eig[3] = {0.0, 0.0, 0.0};
+    double eig_ratio = 0.0;
+    double eig_min_norm = 0.0;
+    std::string seeds_summary;
+    std::string fails;
+    bool accepted = false;
+};
+} // namespace pgo_experiment
+
 struct Config
 {
     double key_pose_delta_deg = 10;
@@ -107,6 +144,36 @@ public:
     M3D offsetR() { return m_r_offset; }
     V3D offsetT() { return m_t_offset; }
 
+    // ===== EXPERIMENT-ONLY INTERFACE (artifacts/local_loop_intervention) =====
+    // 100% production defaults preserved when not explicitly enabled.
+    void setExperimentForcedCandidate(size_t source_id, size_t target_id, bool enable = true)
+    {
+        m_exp_forced_source = source_id;
+        m_exp_forced_target = target_id;
+        m_exp_force_active = enable;
+    }
+
+    void injectLoopPairForExperiment(const LoopPair &pair)
+    {
+        m_cache_pairs.push_back(pair);
+        m_history_pairs.emplace_back(pair.target_id, pair.source_id);
+    }
+
+    void setExperimentAuditRecording(bool enable = true)
+    {
+        m_exp_record_audits = enable;
+    }
+
+    const std::vector<pgo_experiment::CandidateAudit> &getExperimentAudits() const
+    {
+        return m_exp_audits;
+    }
+
+    void clearExperimentAudits()
+    {
+        m_exp_audits.clear();
+    }
+
 private:
     Config m_config;
     std::vector<KeyPoseWithCloud> m_key_poses;
@@ -137,4 +204,10 @@ private:
         double t_fine_ms = 0;
         double t_gates_ms = 0;
     } m_fe;
+    // Experiment-only state (inactive in production)
+    bool m_exp_force_active = false;
+    size_t m_exp_forced_source = 0;
+    size_t m_exp_forced_target = 0;
+    bool m_exp_record_audits = false;
+    std::vector<pgo_experiment::CandidateAudit> m_exp_audits;
 };

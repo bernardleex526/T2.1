@@ -1,0 +1,34 @@
+# Ablation overlay: C2.3 only -- the PointCloud2 decimation PHASE of Utils::pcl2_to_PCL.
+#
+# The node decimates the incoming PointCloud2 with a fixed stride (lidar_filter_num) starting at
+# raw index 0, i.e. it keeps the indices i with i % lidar_filter_num == 0 -- exactly upstream
+# FAST-LIO2's `i % point_filter_num == 0`.  C2.3 asks whether that hard-wired phase biases the
+# frontend.  `pcl2_filter_phase: 1` keeps the complementary residue class instead
+# (i % lidar_filter_num == 1) and nothing else: no change to lidar_filter_num, the range
+# limits, the units, the tag/line rules or the time field.  This overlay therefore MUST NOT set
+# any other key, so the arm stays single-factor; the launch's fail-closed SIM_OVERRIDES check
+# rejects simulation-critical keys, and this one is not among them.
+#
+# Scope (do not overclaim):
+#   * The switch affects ONLY the generic PointCloud2 path.  The Livox CustomMsg path
+#     (Utils::livox2PCL) has no phase parameter: upstream's CustomMsg handler decimates over the
+#     count of VALID points (line/tag/range passing), while this fork strides the RAW index and
+#     applies the tag/line/range rules afterwards, so a phase there would be a different,
+#     multi-factor change and was deliberately NOT bundled here.
+#   * On the SYNTHETIC bag this arm is expected to be a null control: the generator emits each
+#     scan in emission-time order with 48 beams sharing every azimuth, so indices 0..47 all carry
+#     time == 0.  Phase 0 and phase 1 then share both the time origin (t0 = first retained point)
+#     and the azimuth coverage, and the retained subsets differ only in sample identity.
+#     simulation/diagnostics/c2_3_sampling_phase.py measures exactly that.
+#   * A VENDOR PointCloud2 is NOT equivalent to the synthetic one.  Measured on
+#     datasets/bags/IndoorOffice1 topic /mid360/livox/lidar: every point has line == i % 4, so
+#     consecutive indices are one inter-beam interval apart (measured 4.768 us on scan 0,
+#     4.864 us on scan 1) and the per-scan timestamps are not monotonic; with
+#     lidar_filter_num = 2 phase 0 keeps lines {0, 2} and phase 1 keeps lines {1, 3}, and t0
+#     moves by one inter-point interval (the retained frame end moves too).  The ablation result
+#     from this simulation arm therefore does NOT transfer to the vendor bags; see
+#     simulation/diagnostics/c2_3_vendor_ordering.py.
+#
+# Experimental and unvalidated: absent key = 0 = historical/upstream behaviour, which is what
+# config/lio.yaml (production) keeps.
+pcl2_filter_phase: 1

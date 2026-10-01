@@ -1,6 +1,12 @@
 #include "imu_processor.h"
 #include "imu_init.h"
 
+namespace
+{
+// C2.1: target magnitude of the accelerometer rescaling (upstream FAST-LIO2's G_m_s2).
+constexpr double kGravityNorm = 9.81;
+} // namespace
+
 IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf), m_logger(rclcpp::get_logger("imu_processor"))
 {
     m_Q.setIdentity();
@@ -21,16 +27,25 @@ bool IMUProcessor::initialize(SyncPackage &package)
     // Window selection + readiness verdict.  Legacy = whole cache once imu_init_num samples
     // are buffered; static-window mode = the quietest contiguous imu_init_window_s inside the
     // cache, with a TIME-based fallback after imu_init_max_wait_s (see imu_init.h; the fallback
-    // must not additionally require a quiet accel or init deadlocks, review item B3).
+    // must not additionally require a quiet accel or init deadlocks, review item B3);
+    // first-batch mode (C2.2) = the whole first batch once imu_init_min_samples samples exist,
+    // no static verdict, no wait, i.e. the upstream FAST-LIO2 initialization.
+    const ImuInitMode init_mode = m_config.init_mode == "first_batch" ? ImuInitMode::FirstBatch
+                                                                     : ImuInitMode::StaticWindow;
+    const int min_samples = init_mode == ImuInitMode::FirstBatch ? m_config.init_min_samples
+                                                                : m_config.imu_init_num;
     const ImuInitPlan plan = planImuInit(m_imu_cache, m_config.imu_init_window_s,
                                          m_config.imu_init_max_wait_s,
                                          m_config.imu_init_static_gyro_std,
                                          m_config.imu_init_static_acc_dev,
-                                         m_config.imu_init_num);
+                                         min_samples, init_mode);
     if (!plan.ready)
         return false;
     const size_t i0 = plan.i0, i1 = plan.i1;
     const size_t n = m_imu_cache.size();
+    if (init_mode == ImuInitMode::FirstBatch)
+        RCLCPP_WARN(m_logger, "IMU init: first-batch mode, %zu/%d samples spanning %.3fs",
+                    i1 - i0, min_samples, m_imu_cache[i1 - 1].time - m_imu_cache[i0].time);
     if (plan.use_static_window)
         RCLCPP_WARN(m_logger, "IMU init window [%zu,%zu)/%zu gyro_std=%.5f acc_dev=%.4f static=%d waited_out=%d",
                     i0, i1, n, plan.gyro_std, plan.acc_dev, (int)plan.is_static, (int)plan.waited_out);
@@ -47,6 +62,27 @@ bool IMUProcessor::initialize(SyncPackage &package)
     }
     acc_mean /= static_cast<double>(i1 - i0);
     gyro_mean /= static_cast<double>(i1 - i0);
+    // C2.1: upstream FAST-LIO2 rescales every averaged accel sample by G/|mean acc| of the init
+    // window (IMU_Processing.hpp), forcing |a| to 9.81 instead of adopting the sensor's own
+    // scale (~2.89% low on this dataset).  The factor is a property of the sensor, so it is
+    // measured once here and applied to every accel sample the filter later consumes through
+    // m_acc_norm_scale (the remainder propagation below and all of undistort()).
+    // acc_mean is rescaled with it: the gravity-alignment direction is scale invariant, and
+    // this keeps the adopted magnitude (now exactly 9.81), r_wi and the propagation model
+    // consistent, so r_wi*(acc - ba) + g still nulls exactly at rest.
+    if (m_config.acc_normalize)
+    {
+        const double acc_norm = acc_mean.norm();
+        if (acc_norm > 1e-6)
+        {
+            m_acc_norm_scale = kGravityNorm / acc_norm;
+            acc_mean *= m_acc_norm_scale;
+            RCLCPP_WARN(m_logger, "IMU init: acc_normalize |acc_mean|=%.4f scale=%.5f (g target %.2f)",
+                        acc_norm, m_acc_norm_scale, kGravityNorm);
+        }
+        else
+            RCLCPP_WARN(m_logger, "IMU init: |acc_mean|=%.3e too small, acc_normalize skipped", acc_norm);
+    }
     m_kf->x().r_il = m_config.r_il;
     m_kf->x().t_il = m_config.t_il;
     m_kf->x().bg = gyro_mean;
@@ -91,7 +127,7 @@ bool IMUProcessor::initialize(SyncPackage &package)
         const IMUData &tail = m_imu_cache[k];
         Input inp;
         inp.gyro = 0.5 * (head.gyro + tail.gyro);
-        inp.acc = 0.5 * (head.acc + tail.acc);
+        inp.acc = m_acc_norm_scale * 0.5 * (head.acc + tail.acc);
         m_kf->predict(inp, tail.time - head.time, m_Q);
     }
 
@@ -153,7 +189,7 @@ void IMUProcessor::undistort(SyncPackage &package)
     V3D acc_val, gyro_val;
     double dt = 0.0;
     Input inp;
-    inp.acc = m_imu_cache.back().acc;
+    inp.acc = m_acc_norm_scale * m_imu_cache.back().acc;
     inp.gyro = m_imu_cache.back().gyro;
     for (auto it_imu = m_imu_cache.begin(); it_imu < (m_imu_cache.end() - 1); it_imu++)
     {
@@ -162,7 +198,7 @@ void IMUProcessor::undistort(SyncPackage &package)
         if (tail.time < m_last_propagate_end_time)
             continue;
         gyro_val = 0.5 * (head.gyro + tail.gyro);
-        acc_val = 0.5 * (head.acc + tail.acc);
+        acc_val = m_acc_norm_scale * 0.5 * (head.acc + tail.acc);
 
         if (head.time < m_last_propagate_end_time)
             dt = tail.time - m_last_propagate_end_time;

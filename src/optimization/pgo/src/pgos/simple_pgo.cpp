@@ -429,6 +429,13 @@ void SimplePGO::searchForLoopPairs()
         r.accepted = a.fails.empty();
         r.reject = a.fails;
 
+        // Controlled experiment hook: force acceptance of single specified candidate pair
+        // while preserving default behavior and gate calculations for all other candidates.
+        if (m_exp_force_active && cur_idx == m_exp_forced_source && c.idx == static_cast<int>(m_exp_forced_target))
+        {
+            r.accepted = true;
+        }
+
         // The relative pose the registration measured, expressed in the target keyframe's body
         // frame.  Computed for EVERY candidate, not only the accepted ones: ||t|| is the most
         // direct audit of what a candidate claims.  The Scan Context detector asserted that the
@@ -497,6 +504,41 @@ void SimplePGO::searchForLoopPairs()
                r.eig_min_norm,
                desc_ms, query_ms, r.ms.coarse_ms, r.ms.fine_ms, r.ms.gates_ms,
                seeds_seg, decision);
+        if (m_exp_record_audits)
+        {
+            pgo_experiment::CandidateAudit audit;
+            audit.source_id = cur_idx;
+            audit.target_id = c.idx;
+            audit.detector = c.detector;
+            audit.sel_seed = seed_labels[sel];
+            audit.r_offset = a.r_offset;
+            audit.t_offset = a.t_offset;
+            audit.rel_t = a.rel_t;
+            audit.corr = a.corr;
+            audit.corr_allowance = corr_allowance;
+            audit.dyaw = a.dyaw_meas_deg;
+            audit.prior_yaw = prior_yaw_deg;
+            audit.init_yaw = init_yaw_deg;
+            audit.prior_t = prior_t_m;
+            audit.coarse_conv = r.coarse_converged;
+            audit.coarse_rmse = r.coarse_rmse_m;
+            audit.fine_conv = r.fine_converged;
+            audit.fine_rmse = r.fine_rmse_m;
+            audit.fine_plane_rmse = r.fine_plane_rmse_m;
+            audit.inlier_rmse = r.inlier_rmse_m;
+            audit.overlap = r.overlap;
+            audit.overlap_2 = r.overlap_2;
+            audit.overlap_3 = r.overlap_3;
+            audit.n_corr = r.n_corr;
+            audit.n_source = r.n_source;
+            audit.eig[0] = r.eig[0]; audit.eig[1] = r.eig[1]; audit.eig[2] = r.eig[2];
+            audit.eig_ratio = r.eig_ratio;
+            audit.eig_min_norm = r.eig_min_norm;
+            audit.seeds_summary = seeds_seg;
+            audit.fails = a.fails;
+            audit.accepted = r.accepted;
+            m_exp_audits.push_back(audit);
+        }
     }
     m_fe.evaluated += evaluated;
     m_fe.temporal += temporal;

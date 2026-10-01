@@ -21,8 +21,11 @@
 #include <limits>
 #include <vector>
 
-// Returns false only if either cloud is empty (nothing measurable).
-inline bool fitnessAndInliers(pcl::KdTreeFLANN<PointType> &target_tree,
+// Returns false only if either cloud is empty (nothing measurable).  Templated on the search
+// object so the same index can be shared with the ICP itself (pcl::search::KdTree) or be a
+// standalone FLANN tree; the search semantics are identical either way.
+template <typename TreeT>
+inline bool fitnessAndInliers(TreeT &target_tree,
                               const CloudType::Ptr &src, double corr_dist_m,
                               double *mean_sq_dist, double *inlier_ratio)
 {

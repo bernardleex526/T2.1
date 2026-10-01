@@ -155,3 +155,29 @@ TEST(ImuInit, LegacyModeUsesWholeCacheOnceInitNumSamplesExist)
     EXPECT_EQ(plan.i0, 0u);
     EXPECT_EQ(plan.i1, cache.size());
 }
+
+// C2.2: first-batch initialization (upstream FAST-LIO2 behaviour).  The platform is already
+// moving and rotating, so the static-window mode would sit out the whole 5 s fallback; the
+// first batch must initialise as soon as it is complete instead.
+TEST(ImuInit, FirstBatchIsReadyWithoutAStaticVerdict)
+{
+    std::vector<IMUData> cache;
+    for (int i = 0; i < 40; ++i) // 0.1 s at 400 Hz
+        cache.push_back(sample(i * 0.0025, V3D(2.0, 0, -9.4) + alternating(1.5, i),
+                               alternating(0.4, i)));
+
+    const ImuInitPlan plan = planImuInit(cache, kWindowS, kMaxWaitS, kGyroStd, kAccDev, 40,
+                                         ImuInitMode::FirstBatch);
+    EXPECT_TRUE(plan.ready);
+    EXPECT_FALSE(plan.use_static_window); // no quiet-window verdict in this mode
+    EXPECT_FALSE(plan.is_static);
+    EXPECT_FALSE(plan.waited_out);
+    EXPECT_EQ(plan.i0, 0u);
+    EXPECT_EQ(plan.i1, cache.size());
+    EXPECT_GT(plan.gyro_std, kGyroStd); // the batch is NOT static - that is the point: it is
+    EXPECT_GT(plan.acc_dev, kAccDev);   // still used, without waiting for the fallback
+
+    cache.pop_back(); // one sample short of a full batch
+    EXPECT_FALSE(planImuInit(cache, kWindowS, kMaxWaitS, kGyroStd, kAccDev, 40,
+                             ImuInitMode::FirstBatch).ready);
+}
