@@ -9,6 +9,14 @@
 # Loading: flat schema, read by lio_node.cpp loadParameters() -> YAML::LoadFile(config_path):
 #   ros2 run fastlio2 lio_node --ros-args -p config_path:=<...>/lio_orin_nx.yaml
 #
+# PREFLIGHT: before loading this on the robot, run
+#   python3 tools/preflight_config.py --config src/sensing/fastlio2/config/lio_orin_nx.yaml
+# It refuses to call a profile ready while ext_il is missing, the per-point time
+# field is empty, imu_acc_scale is unstated, a noise parameter is non-positive, or
+# an upstream-style nested group is present (which this flat loader ignores).  As
+# shipped this file FAILS that check on purpose - it is an unvalidated starting
+# point, not a deployment profile.
+#
 # SCHEMA NOTE: this fork reads FLAT top-level keys only - no nested groups and no aliases.
 # The deployment spec was written in upstream FAST-LIO (laserMapping.cpp) naming, which uses
 # common/mapping/preprocess/publish groups that lio_node does NOT read. The mapping applied:
@@ -105,3 +113,47 @@ point_quality_thresh: 0.9
 #   ext_il: [<x>, <y>, <z>, <qx>, <qy>, <qz>, <qw>]
 
 lidar_cov_inv: 1000.0
+
+# --- quadruped gait motion compensation: DISABLED, needs a measurement first ---
+# A legged platform puts a periodic pitch/roll oscillation (gait fundamental +
+# harmonics) and a foot-contact specific-force spike into the IMU.  The IESKF has
+# no model for either, so it integrates the oscillation as real rotation and the
+# scan-to-map residual grows - the "layered / serrated cloud" symptom on a moving
+# robot.  gait_filter.h removes the periodic part before the sample reaches the
+# filter state.
+#
+# WHY THE CENTRES ARE EMPTY: the notch centres are the gait frequencies, and the
+# repository has never recorded this robot walking, so there is no measured value
+# to put here.  The review report's [15, 20, 25] Hz example is an illustration,
+# not a measurement; a notch at the wrong frequency deletes real motion and
+# leaves the oscillation in place, which is worse than not filtering.
+#
+# TO ENABLE (see docs/quadruped_adaptation.md and docs/calibration_procedure.md):
+#   1. record a straight walk at the normal speed, >= 30 s:
+#        ros2 bag record /imu/data -o walk_imu
+#   2. derive the fundamental and harmonics:
+#        python3 tools/imu_gait_spectrum.py --bag walk_imu --topic /imu/data --emit-yaml
+#   3. paste the emitted block below and set gait_filter_enable: true
+#   4. verify the map/odometry did not get WORSE (docs/tuning_guide.md): the
+#      benefit is unmeasured on this repository's data.
+#
+# With gait_filter_enable false (the shipped value) the IMU path is byte-identical
+# to the historical behaviour: the filter is inert and no sample is altered.
+gait_filter_enable: false
+# gait_notch_freq_hz: [<f0>, <2*f0>, <3*f0>]   # from imu_gait_spectrum.py
+# gait_notch_q: <f0 / measured peak width>     # e.g. 10-20 for a sharp gait line
+gait_filter_sample_rate_hz: 200.0   # MUST match the real IMU rate; the notch is
+                                    # meaningless if this is wrong (verify with
+                                    # `ros2 topic hz /imu/data`)
+# Axis selection. Default: filter only the gyro pitch/roll axes. Yaw (z) is left
+# alone because gait does not oscillate in yaw and yaw is the one attitude
+# component the LiDAR observes directly. The accel triple is left alone so the
+# gyro and accel keep the SAME group delay and stay time-aligned; enable it only
+# to suppress foot-contact spikes, and then enable it for BOTH triples so the
+# relative skew cancels.
+gait_filter_gyro_x: true
+gait_filter_gyro_y: true
+gait_filter_gyro_z: false
+gait_filter_accel_x: false
+gait_filter_accel_y: false
+gait_filter_accel_z: false

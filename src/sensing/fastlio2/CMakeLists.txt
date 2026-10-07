@@ -47,9 +47,31 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
 
 
+# Sophus include path: the ROS/apt Sophus package (ros-humble-sophus) ships an
+# INTERFACE IMPORTED target `Sophus::Sophus` and does NOT define the legacy
+# `Sophus_INCLUDE_DIRS` variable, so the plain variable below expands to nothing
+# and `#include <sophus/so3.hpp>` fails with "No such file or directory" even
+# though the header is installed in /opt/ros/humble/include.  Prefer the target
+# when it exists and fall back to the variable for source builds of Sophus
+# (which is what upstream FAST-LIO documents).
+set(T21_SOPHUS_INCLUDE_DIRS "${Sophus_INCLUDE_DIRS}")
+if(TARGET Sophus::Sophus)
+  get_target_property(T21_SOPHUS_TARGET_INCLUDES Sophus::Sophus INTERFACE_INCLUDE_DIRECTORIES)
+  if(T21_SOPHUS_TARGET_INCLUDES)
+    list(APPEND T21_SOPHUS_INCLUDE_DIRS ${T21_SOPHUS_TARGET_INCLUDES})
+  endif()
+endif()
+if(NOT T21_SOPHUS_INCLUDE_DIRS)
+  message(FATAL_ERROR
+    "Sophus headers not found: find_package(Sophus) succeeded but exposed neither "
+    "Sophus::Sophus nor Sophus_INCLUDE_DIRS. Install ros-humble-sophus or a Sophus "
+    "source build.")
+endif()
+list(REMOVE_DUPLICATES T21_SOPHUS_INCLUDE_DIRS)
+
 include_directories(
   ${EIGEN3_INCLUDE_DIRS}
-  ${Sophus_INCLUDE_DIRS}
+  ${T21_SOPHUS_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
 )
@@ -103,6 +125,31 @@ if(BUILD_TESTING)
                                                           ${OpenCV_INCLUDE_DIRS})
   ament_target_dependencies(test_utils_preprocess pcl_conversions sensor_msgs livox_ros_driver2)
   target_link_libraries(test_utils_preprocess ${PCL_LIBRARIES})
+
+  # Behavioural regression of the quadruped gait notch cascade
+  # (map_builder/gait_filter.h): pass-through when inert, real attenuation at
+  # the configured centres, per-axis masking that does not leak filter state
+  # between axes, unity DC gain, and config validation.  Header-only and free of
+  # ROS/PCL, so this test needs Eigen and gtest only.
+  ament_add_gtest(test_gait_filter test/test_gait_filter.cpp)
+  target_include_directories(test_gait_filter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                     ${EIGEN3_INCLUDE_DIRS})
+
+  # Wiring check for the gait compensation inside IMUProcessor: with the feature
+  # disabled (the shipped profile) the IMU path must be unchanged, and an enabled
+  # but unusable configuration must stay inert instead of building a broken
+  # filter.  Needs the map_builder sources, so it links the same set as the node.
+  ament_add_gtest(test_gait_integration test/test_gait_integration.cpp
+                  src/map_builder/ieskf.cpp
+                  src/map_builder/commons.cpp
+                  src/map_builder/imu_processor.cpp)
+  target_include_directories(test_gait_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                          ${EIGEN3_INCLUDE_DIRS}
+                                                          ${PCL_INCLUDE_DIRS}
+                                                          ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(test_gait_integration rclcpp pcl_conversions sensor_msgs)
+  # SyncPackage holds a cv::Mat, so the test needs OpenCV linked as well as PCL.
+  target_link_libraries(test_gait_integration ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
 
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

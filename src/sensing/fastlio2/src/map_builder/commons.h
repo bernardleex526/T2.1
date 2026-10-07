@@ -84,9 +84,35 @@ struct Config
     double lidar_cov_inv = 1000.0;
 
     // 添加状态约束参数
+    // NOTE: these three mirror the State:: statics in ieskf.cpp and the
+    // loadParameters() fallbacks in lio_node.cpp.  max_bias_accel used to read
+    // 0.2 here while ieskf.cpp initialised the static to 0.5 and lio_node.cpp
+    // fell back to 0.5, so this field's value never took effect (the node always
+    // overwrites it from the YAML key or the 0.5 fallback).  Set to the value
+    // that actually applies, so reading this struct is not misleading.
     double max_bias_gyro = 0.1;
-    double max_bias_accel = 0.2; 
+    double max_bias_accel = 0.5;
     double max_velocity = 10.0;
+
+    // --- 四足步态运动补偿（opt-in；默认关闭 = 与历史行为逐位一致） ---
+    // 步态使 IMU 出现周期性俯仰/侧滚振荡与触地冲击，IESKF 无此模型，会把振荡当成真实
+    // 旋转积分，导致点云分层/锯齿。陷波器在样本进入滤波器之前去掉该周期分量。
+    // 默认全关：仓库未在目标平台实测步态基频，任何中心频率都是待标定量，不能预设。
+    // 频率需用 tools/imu_gait_spectrum.py 对实走数据做 FFT 得到（见 docs/tuning_guide.md）。
+    bool gait_filter_enable = false;
+    Vec<double> gait_notch_freq_hz{};          // 中心频率列表，每个一个二阶节
+    double gait_notch_q = 10.0;                // 品质因数，>0
+    double gait_filter_sample_rate_hz = 200.0; // IMU 采样率，须 > 2*max(中心频率)
+    // 轴选择。默认只滤陀螺的俯仰/侧滚(x,y)，不滤偏航(z)：步态不产生偏航振荡，
+    // 而偏航是 LiDAR 唯一能直接观测的姿态分量，滤它只会引入不必要的相位滞后。
+    bool gait_filter_gyro_x = true;
+    bool gait_filter_gyro_y = true;
+    bool gait_filter_gyro_z = false;
+    // 加速度计默认不滤。陀螺与加速度计若用同一组系数，二者群延迟相同、相对时序不变；
+    // 只滤其中一个会引入相对时间偏移。需要抑制触地冲击时才打开，并自行承担该偏移。
+    bool gait_filter_accel_x = false;
+    bool gait_filter_accel_y = false;
+    bool gait_filter_accel_z = false;
 };
 
 struct IMUData

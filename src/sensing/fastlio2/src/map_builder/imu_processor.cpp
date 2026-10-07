@@ -19,11 +19,84 @@ IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config
     m_imu_cache.clear();
     m_poses_cache.clear();
     m_pushed = true;
+    configureGaitFilter();
+}
+
+void IMUProcessor::configureGaitFilter()
+{
+    if (!m_config.gait_filter_enable)
+        return; // feature off: filter stays inert, IMU path unchanged
+
+    gait::GaitNotchFilter::Options opt;
+    opt.notch_freq_hz = m_config.gait_notch_freq_hz;
+    opt.q = m_config.gait_notch_q;
+    opt.sample_rate_hz = m_config.gait_filter_sample_rate_hz;
+    opt.filter_gyro_x = m_config.gait_filter_gyro_x;
+    opt.filter_gyro_y = m_config.gait_filter_gyro_y;
+    opt.filter_gyro_z = m_config.gait_filter_gyro_z;
+    opt.filter_accel_x = m_config.gait_filter_accel_x;
+    opt.filter_accel_y = m_config.gait_filter_accel_y;
+    opt.filter_accel_z = m_config.gait_filter_accel_z;
+
+    const bool ok = m_gait_filter.configure(opt);
+    const gait::GaitNotchFilter::Validation &v = m_gait_filter.validation();
+    for (const std::string &w : v.warnings)
+        RCLCPP_WARN(m_logger, "Gait filter: %s", w.c_str());
+
+    if (!ok)
+    {
+        for (const std::string &e : v.errors)
+            RCLCPP_ERROR(m_logger, "Gait filter: %s", e.c_str());
+        RCLCPP_ERROR(m_logger,
+                     "Gait filter requested but NOT installed (fs=%.1f Hz, q=%.2f, %zu centre(s) configured). "
+                     "IMU path is unmodified.",
+                     opt.sample_rate_hz, opt.q, opt.notch_freq_hz.size());
+        return;
+    }
+
+    RCLCPP_WARN(m_logger,
+                "Gait filter ACTIVE: %d section(s) at q=%.2f, fs=%.1f Hz | gyro[x=%d y=%d z=%d] "
+                "accel[x=%d y=%d z=%d] | group delay at 5 Hz = %.2f ms",
+                m_gait_filter.sectionCount(), opt.q, opt.sample_rate_hz,
+                (int)opt.filter_gyro_x, (int)opt.filter_gyro_y, (int)opt.filter_gyro_z,
+                (int)opt.filter_accel_x, (int)opt.filter_accel_y, (int)opt.filter_accel_z,
+                m_gait_filter.groupDelaySeconds(5.0) * 1000.0);
+
+    // Gyro filtered but accel not (or vice versa) means the two streams acquire a
+    // RELATIVE delay equal to the group delay above; the pre-integration assumes they are
+    // time-aligned.  This is a legitimate configuration (the accel is only noisier, not
+    // shifted), but the operator must know the number rather than discover it as drift.
+    const bool gyro_any = opt.filter_gyro_x || opt.filter_gyro_y || opt.filter_gyro_z;
+    const bool accel_any = opt.filter_accel_x || opt.filter_accel_y || opt.filter_accel_z;
+    if (gyro_any != accel_any)
+        RCLCPP_WARN(m_logger,
+                    "Gait filter: gyro and accel are filtered DIFFERENTLY, so they now carry a "
+                    "relative time skew of about %.2f ms at 5 Hz. Prefer filtering both triples "
+                    "with the same coefficients (skew cancels) unless the accel path was chosen "
+                    "deliberately.",
+                    m_gait_filter.groupDelaySeconds(5.0) * 1000.0);
+}
+
+void IMUProcessor::ingestImu(const Vec<IMUData> &samples)
+{
+    if (!m_gait_filter.valid())
+    {
+        m_imu_cache.insert(m_imu_cache.end(), samples.begin(), samples.end());
+        return;
+    }
+    m_imu_cache.reserve(m_imu_cache.size() + samples.size());
+    for (const IMUData &s : samples)
+    {
+        IMUData filtered = s;
+        filtered.gyro = m_gait_filter.filterGyro(s.gyro);
+        filtered.acc = m_gait_filter.filterAccel(s.acc);
+        m_imu_cache.push_back(filtered);
+    }
 }
 
 bool IMUProcessor::initialize(SyncPackage &package)
 {
-    m_imu_cache.insert(m_imu_cache.end(), package.imus.begin(), package.imus.end());
+    ingestImu(package.imus);
     // Window selection + readiness verdict.  Legacy = whole cache once imu_init_num samples
     // are buffered; static-window mode = the quietest contiguous imu_init_window_s inside the
     // cache, with a TIME-based fallback after imu_init_max_wait_s (see imu_init.h; the fallback
@@ -171,7 +244,7 @@ void IMUProcessor::undistort(SyncPackage &package)
     // ==================== 诊断代码结束 ====================
     m_imu_cache.clear();
     m_imu_cache.push_back(m_last_imu);
-    m_imu_cache.insert(m_imu_cache.end(), package.imus.begin(), package.imus.end());
+    ingestImu(package.imus);
 
     // const double imu_time_begin = m_imu_cache.front().time;
     const double imu_time_end = m_imu_cache.back().time;

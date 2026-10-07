@@ -45,3 +45,39 @@
 - Airy 的逐点时间字段名/量纲**未验证**：`lio_orin_nx.yaml` 中 `pcl2_time_field: ""`，
   即当前**不做扫描内去畸变**（`curvature = 0`）。四足高动态下会表现为点云“锯齿/分层”。
   实测确认字段后再填 `pcl2_time_field` / `pcl2_time_scale`。
+
+### 3.1 用工具实测，不要猜字段名
+
+```bash
+python3 tools/rslidar_pcl2_probe.py --topic /rslidar_points --once
+#   或对已录的包：  --bag <bag> --topic /rslidar_points --emit-yaml
+```
+
+该工具按**实测值域**判定，而不是按字段名：
+
+- 逐点时间的跨度必须约等于一个扫描周期（Airy 10 Hz → 0.1 s）；
+- 由“哪个 10 的幂次能把跨度折算到约一个扫描周期”决定 `pcl2_time_scale`；
+- 字段类型必须是 `FLOAT32`/`FLOAT64`。`UINT32` 纳秒是真实存在但**本仓库读不了**的
+  字段（`pcl2_to_PCL` 只接受浮点），此时工具以退出码 2 明确拒绝，而不是给出一个
+  会让补偿静默失效的配置值。
+
+### 3.2 一个必须知道的上游事实
+
+速腾官方 ROS 2 SDK `rslidar_sdk` 的字段布局由编译期宏决定：
+
+| 构建选项 | 发布字段 | 逐点时间 |
+|:---|:---|:---|
+| `POINT_TYPE=XYZI`（**SDK 默认**） | `x, y, z, intensity` | ❌ 没有 |
+| `POINT_TYPE=XYZIRT` | `+ ring, timestamp` | ✅ `timestamp`，`FLOAT64` |
+
+因此“Airy 没有逐点时间字段”是**很可能出现的真实答案**，而不是工具故障。若如此，
+必须改 SDK 构建选项重新编译驱动；在 YAML 里写一个不存在的字段名与留空等价
+（`find_offset` 找不到即退化为 `curvature = 0`），却会让配置看起来“已填”。
+
+### 3.3 本节与时间同步的关系
+
+逐点时间解决的是**扫描内**运动补偿（一次扫描 0.1 s 内的畸变）；
+本文件 §1–§2 讨论的是 **LiDAR 与 IMU 之间的时钟域**（量级 ms–s）。
+两者是不同的问题，**不能互相替代**：字段填对了，时钟域不同仍然会漂移；
+反之亦然。`tools/odom_static_drift.py` 能区分二者——单步大跳变指向时钟域，
+平滑漂移指向外参/量纲。

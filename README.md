@@ -327,12 +327,57 @@ python3 simulation/scripts/test_t3_localization.py --run-dir /tmp/sim_loc --ref-
 
 ---
 
-## 八、相关文档索引
+## 八、部署工具（`tools/`，纯 Python，无需 ROS 即可运行）
+
+这四个工具把"待标定量"变成"可测量的量"。它们都按**实测值**判定，并在无法给出可靠结论时
+**明确拒绝**（退出码 2），而不是编一个看似合理的数字——因为这几个值会直接写进部署配置。
+
+| 工具 | 解决的问题 | 产出 | 拒绝的条件（退出码 2） |
+|:---|:---|:---|:---|
+| `tools/preflight_config.py` | 部署前配置自检 | 就绪 / 阻塞项清单 | `ext_il` 缺失、`pcl2_time_field` 为空、`imu_acc_scale` 未声明、噪声参数非正、步态滤波开启但无频率、频率超 Nyquist、上游风格嵌套分组 |
+| `tools/rslidar_pcl2_probe.py` | 逐点时间字段名与量纲 | `pcl2_time_field` / `pcl2_time_scale` | 没有可用的逐点时间字段；或字段类型不是 `FLOAT32`/`FLOAT64` |
+| `tools/imu_allan_variance.py` | IMU 噪声参数 | `na` / `ng` / `nba` / `nbg` | 数据非静止（Allan 方差对运动数据无意义） |
+| `tools/imu_gait_spectrum.py` | 四足步态频率 | `gait_notch_freq_hz` / `gait_notch_q` | 未找到具有谐波结构的周期性步态 |
+| `tools/odom_static_drift.py` | 静止漂移（外参/时钟/量纲的端到端检验） | 漂移量、漂移速率、单步跳变、偏航漂移 | 超预算，并区分"时钟跳变 / 平滑漂移 / 纯偏航漂移" |
+
+```bash
+# 典型顺序（详见 docs/calibration_procedure.md）
+python3 tools/rslidar_pcl2_probe.py --topic /rslidar_points --once
+python3 tools/imu_allan_variance.py --bag imu_static --topic /imu/data --emit-yaml
+python3 tools/imu_gait_spectrum.py --bag walk_imu --topic /imu/data --emit-yaml
+python3 tools/odom_static_drift.py --bag static10 --topic /fastlio2/lio_odom
+python3 tools/preflight_config.py --config src/sensing/fastlio2/config/lio_orin_nx.yaml
+```
+
+**自测**（`tests/test_probe_tools.py`，51 个用例，含已知参数合成数据的定值检验）：
+
+```bash
+python3 -m pytest tests/test_probe_tools.py -q
+```
+
+> 已发布配置 `src/sensing/fastlio2/config/lio_orin_nx.yaml` **会被预检判为 `NOT READY`**，这是
+> 刻意的：它是不带实测外参、不做扫描内去畸变的未验证起点。详见第七节第 2 条。
+
+---
+
+## 九、相关文档索引
+
+### 交付与验收
 
 - [WP2 T2.1 详细执行计划要求与问题解决规范](docs/detailed_plan_requirements.md)
 - [WP2 T2.1 软件交接文档（去硬件）](docs/validation/software_handoff_20260930.md)
 - [本地仿真与指标核验验收报告](docs/validation/local_simulation_acceptance.md)
+- [硬件就绪整改验证记录（2026-10-07）](docs/validation/hardware_readiness_20261007.md)
 - [FastLIVO2 接口与坐标契约](docs/validation/04b73f5_fastlivo2_interface.md)
 - [算法参数定义、量纲与配置对照](docs/validation/04b73f5_param_notes.md)
 - [工程部署方案与平台契约](docs/validation/04b73f5_p3_deployment.md)
 - [Localizer 回归与门控诊断](docs/validation/04b73f5_localizer_regression.md)
+
+### 硬件部署（Orin NX + Airy/Odin1 + 四足平台）
+
+- [硬件部署指南](docs/hardware_deployment.md) — 分阶段上机顺序与每阶段验收门槛
+- [标定流程](docs/calibration_procedure.md) — 外参 / 逐点时间 / IMU 噪声 / 步态频率
+- [调参与排查指南](docs/tuning_guide.md) — 症状决策树、参数推荐区间、敏感性、回归清单
+- [测试场景与统计口径](docs/test_scenarios.md) — 回环路线、控制点、统计量统一定义
+- [四足适配说明](docs/quadruped_adaptation.md) — 步态补偿的代码实现与 A/B 验证
+- [时间同步说明](src/sensing/fastlio2/config/TIME_SYNC_NOTES.md) — 本仓库不含同步实现，同步是部署前提

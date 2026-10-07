@@ -299,6 +299,21 @@ private:
 
             if (config["lidar_cov_inv"]) m_builder_config.lidar_cov_inv = config["lidar_cov_inv"].as<double>();
 
+            // --- 四足步态运动补偿（opt-in，扁平键，与上面所有键同一约定） ---
+            // 默认关闭：中心频率必须由目标平台的实走数据 FFT 得到（tools/imu_gait_spectrum.py），
+            // 仓库不预置任何未实测的步态频率。缺省时 IMU 通路与历史行为逐位一致。
+            if (config["gait_filter_enable"]) m_builder_config.gait_filter_enable = config["gait_filter_enable"].as<bool>();
+            if (config["gait_notch_freq_hz"] && config["gait_notch_freq_hz"].IsSequence())
+                m_builder_config.gait_notch_freq_hz = Vec<double>(config["gait_notch_freq_hz"].as<std::vector<double>>());
+            if (config["gait_notch_q"]) m_builder_config.gait_notch_q = config["gait_notch_q"].as<double>();
+            if (config["gait_filter_sample_rate_hz"]) m_builder_config.gait_filter_sample_rate_hz = config["gait_filter_sample_rate_hz"].as<double>();
+            if (config["gait_filter_gyro_x"]) m_builder_config.gait_filter_gyro_x = config["gait_filter_gyro_x"].as<bool>();
+            if (config["gait_filter_gyro_y"]) m_builder_config.gait_filter_gyro_y = config["gait_filter_gyro_y"].as<bool>();
+            if (config["gait_filter_gyro_z"]) m_builder_config.gait_filter_gyro_z = config["gait_filter_gyro_z"].as<bool>();
+            if (config["gait_filter_accel_x"]) m_builder_config.gait_filter_accel_x = config["gait_filter_accel_x"].as<bool>();
+            if (config["gait_filter_accel_y"]) m_builder_config.gait_filter_accel_y = config["gait_filter_accel_y"].as<bool>();
+            if (config["gait_filter_accel_z"]) m_builder_config.gait_filter_accel_z = config["gait_filter_accel_z"].as<bool>();
+
             // 状态约束参数 - 使用默认值
             m_builder_config.max_bias_gyro = config["max_bias_gyro"] ? config["max_bias_gyro"].as<double>() : 0.1;
             m_builder_config.max_bias_accel = config["max_bias_accel"] ? config["max_bias_accel"].as<double>() : 0.5;
@@ -309,6 +324,14 @@ private:
             State::max_bias_accel = m_builder_config.max_bias_accel;
             State::max_velocity = m_builder_config.max_velocity;
             
+            // 步态补偿开启但没有中心频率 = 无法构成任何陷波节。这不是致命错误（滤波保持
+            // 惰性、IMU 通路不变），但必须是响亮的告警：否则使用者会以为补偿已生效。
+            if (m_builder_config.gait_filter_enable && m_builder_config.gait_notch_freq_hz.empty())
+                RCLCPP_ERROR(this->get_logger(),
+                             "gait_filter_enable is true but gait_notch_freq_hz is empty: no notch can be "
+                             "built and gait compensation will NOT run. Derive the centres from a recorded "
+                             "walk first (tools/imu_gait_spectrum.py; see docs/tuning_guide.md).");
+
             RCLCPP_INFO(this->get_logger(), "Parameters loaded successfully");
             
         } catch (const YAML::Exception& e) {
