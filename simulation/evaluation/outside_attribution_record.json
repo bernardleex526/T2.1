@@ -1,0 +1,138 @@
+{
+ "author": "S1OutsideAttribution task",
+ "corrected_utc": "2026-09-30T00:00:00Z",
+ "evaluator_gate": {
+  "consumer_use": "python3 map_accuracy_eval.py --est-map <est.pcd> --ref-map /home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd --roi roi_refframe_corrected_mcd_tuhh_night_09.json --transform-json transform_independent_source.json --outside-attribution outside_attribution_record.json --stat-voxel 0.25 --out <result.json>",
+  "flag": "--outside-attribution",
+  "gate": "map_accuracy_eval.py evaluate_map() pass_preconditions['outside_region_points_attributed'] -> status BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS",
+  "rule": "FAIL-CLOSED MEASURED MEMBERSHIP (v2.3.0). The membership of each sampled estimate point outside the frozen region is MEASURED against the member geometry THIS record declares (include-box union MINUS exclude-box union). The record's declarative flags (source / artifact / independence) alone attribute nothing; a record whose geometry is absent, non-independent or unusable attributes nothing; ANY outside point the declared geometry does not cover stays an unknown residual and blocks an overall PASS. There is no tolerance fraction and no bound tuned to the estimate's own point count.",
+  "version": "map_accuracy_eval.py v2.3.0"
+ },
+ "frozen_utc": "2026-09-30T01:15:39Z",
+ "independent_of_error": true,
+ "independent_of_estimate": true,
+ "independence_argument": {
+  "independent_of_error": "both constituent boxes are pre-declared: the reference AABB comes from the published survey crop provenance and the ROI from GT valid support x reference coverage; neither the LIO trajectory nor any registration/ICP residual enters the definition",
+  "independent_of_estimate": "the member set is a fixed region algebra (reference-map extent minus ROI extent); no estimate point, count, voxel grid or residual value enters it, so relocating the estimate cannot change the member set"
+ },
+ "measured_coverage_evidence": {
+  "definition": "covered = sampled point is outside the authoritative ROI AND inside the declared member region (include AABB minus exclude AABB)",
+  "fork_replay_2": {
+   "est_map": "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_2_fork/map/map.pcd",
+   "est_map_sha256": "042fcd8f3f706d1e9e783c23df3cd4535a15353859707abf4466a86222f6410c",
+   "est_outside_region_fraction": 0.788650570414692,
+   "est_outside_region_n": 235801,
+   "est_sampled_total_n": 298993,
+   "member_region_geometry_sha256": "7768ff3d1c225563c916c75a67f8b084d8b3c6d007b42cdffdc52c5f46ed93a0",
+   "outside_points_inside_member_region_fraction": 0.7568500557673632,
+   "outside_points_inside_member_region_n": 178466,
+   "outside_points_not_covered_by_member_region_fraction": 0.2431499442326368,
+   "outside_points_not_covered_by_member_region_n": 57335,
+   "result_file": "fork/artifacts/04b73f5_controlled_ab_20260929/replay_fork_v2/map_accuracy_result.roi_refframe_corrected.json"
+  },
+  "method": "estimate cloud transformed by the SE(3) actually applied in each run (result transform_record.matrix_ref_est), then sampled with the evaluator's own sampler eval_common.voxel_grid_select(stat_voxel=0.25 m, half-voxel grid origin 0.125 m) and classified against roi_refframe_corrected (roi_mask) and against the declared member geometry (member_region_mask, include AABB MINUS exclude AABB). The sampled totals reproduce the recorded evaluator numbers exactly. No residual value is used.",
+  "phase_b_context": {
+   "fork_outside_fraction_refframe_roi": 0.788650570414692,
+   "note": "Phase B external-point statistics for mcd_tuhh_night_09: fork 78.87% of sampled estimate points outside the ROI, upstream 99.89% outside the frozen reference-AABB ROI. Both runs were BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS before this record existed.",
+   "upstream_outside_fraction_diagnostic_roi": 0.9988955902970663
+  },
+  "reproduction": {
+   "by": "EvidenceRepair task (validation owner of this record)",
+   "utc": "2026-09-30T00:00:00Z",
+   "note": "the four counts (sampled total / outside ROI / covered / residual) were independently recomputed from the archived maps, the archived transform and the declared member geometry; the counts match the v1 record exactly. The v1 record's fork fraction field (0.7569352954395444) was inconsistent with its own count (178466/235801 = 0.7568500557673632, a ~20-point difference from a second, slightly different mask pass); the fractions here are recomputed from the counts. No estimate-count tuned bound is introduced anywhere."
+  },
+  "residual_note": "The declared member region accounts for 75.69% of the fork's outside-ROI sampled points (9.37% for upstream) and does NOT cover the remainder: the uncovered points lie outside the published reference map's own AABB, so they are not within 'reference map coverage' as this record defines it. Under the v2.3.0 gate that remainder is an UNKNOWN RESIDUAL -- it is NOT attributed and it blocks an overall PASS (n=57335 fork / n=1588007 upstream sampled points). This record therefore does NOT unblock either arm; a genuine unblocking needs member geometry that actually covers every outside point, or an ROI that contains essentially the whole estimate.",
+  "upstream_replay_1": {
+   "est_map": "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_1_upstream/map/map.pcd",
+   "est_map_sha256": "41369bb2d041623058bae101a00881f01794a44c038bf61602a35e30fdd8319b",
+   "est_outside_region_fraction": 0.965610092673421,
+   "est_outside_region_n": 1752142,
+   "est_sampled_total_n": 1814544,
+   "member_region_geometry_sha256": "7768ff3d1c225563c916c75a67f8b084d8b3c6d007b42cdffdc52c5f46ed93a0",
+   "outside_points_inside_member_region_fraction": 0.09367676820714303,
+   "outside_points_inside_member_region_n": 164135,
+   "outside_points_not_covered_by_member_region_fraction": 0.906323231792857,
+   "outside_points_not_covered_by_member_region_n": 1588007,
+   "result_file": "fork/artifacts/04b73f5_controlled_ab_20260929/replay_upstream_v2/map_accuracy_result_refframe_corrected_roi_DIAGNOSTIC.json"
+  }
+ },
+ "member_region": {
+  "derivation": "published reference-map crop AABB MINUS the frame-consistent authoritative ROI AABB; both boxes are pre-declared source geometry (reference survey crop provenance and dataset GT valid support x reference coverage, both in reference_map_frame)",
+  "exclude": [
+   {
+    "bounds": {
+     "max": [
+      0.0,
+      0.0064150364781738745,
+      3.406991887225236
+     ],
+     "min": [
+      -101.62035728487919,
+      -79.3409634596976,
+      -0.41420407840745255
+     ]
+    },
+    "file": "evaluation/roi_refframe_corrected_mcd_tuhh_night_09.json",
+    "id": "authoritative_roi_aabb",
+    "note": "current sha256 of the frozen authoritative ROI file; the historic corrected-ROI results scored the pre-freeze bytes sha256 4d9fc286918b9af0052fe509d56682d63f8422d4bb2b6da0c36ee2699fdfeaa6 (same bounds)",
+    "roi_id": "authoritative_gt_support_x_ref_coverage_refframe_mcd_tuhh_night_09",
+    "sha256": "4f6ef12480d7c5662fbb9a51505baef64a5191369aa4a1c3662986dd73bb99ef",
+    "type": "aabb"
+   }
+  ],
+  "frame": "reference_map_frame",
+  "frame_requirement": "member_region.frame MUST equal the frame the outside points are measured in (the frozen ROI's frame, here reference_map_frame). The evaluator refuses a frameless or mis-framed member_region and applies NO frame conversion, so the boxes below are declared directly in reference_map_frame.",
+  "include": [
+   {
+    "bounds": {
+     "max": [
+      11.99982221913436,
+      12.00636476937984,
+      10.003280400815452
+     ],
+     "min": [
+      -113.6203036248963,
+      -91.34089276191264,
+      -3.3053242710034176
+     ]
+    },
+    "derivation": "datasets/gt/mcd/tuhh_night_09_seeded.pcd.provenance.json bbox_out_min / bbox_out_max (crop of the 124-station TUHH survey, pad 12 m XY / 8 m Z around the GT path)",
+    "id": "reference_map_aabb",
+    "source_file": "datasets/gt/mcd/tuhh_night_09_seeded.pcd.provenance.json",
+    "source_sha256": "6dd116aaf6d6a3fc7d59dcc663dd847c795b8d3b71743cd9b296b09a3ec1c746",
+    "type": "aabb"
+   }
+  ],
+  "independent_of_error": true,
+  "independent_of_estimate": true,
+  "schema": "member_region/v1",
+  "set_operation": "include-box union MINUS exclude-box union"
+ },
+ "member_set_description": "Points within reference map coverage (tuhh_night_09_seeded.pcd AABB) but outside the authoritative evaluation ROI (roi_refframe_corrected). These represent physical environment structure beyond the predefined region of interest.",
+ "outcome_under_v2_gate": {
+  "conclusion": "both arms stay BLOCKED with pass=null: the declared member region covers only 75.69% (fork) / 9.37% (upstream) of the outside points, so 57335 / 1588007 points remain unknown residuals. A BLOCKED status with pass=null is NOT a PASS and NOT an accuracy claim.",
+  "fork_replay_2": {
+   "attributed": false,
+   "covered_by_member_region_n": 178466,
+   "outside_n": 235801,
+   "residual_uncovered_n": 57335,
+   "status": "BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS"
+  },
+  "upstream_replay_1": {
+   "attributed": false,
+   "covered_by_member_region_n": 164135,
+   "outside_n": 1752142,
+   "residual_uncovered_n": 1588007,
+   "status": "BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS"
+  }
+ },
+ "schema": "outside_attribution/v2",
+ "schema_history": "v1 (frozen_utc 2026-09-30T01:15:39Z) carried only source/artifact/independence flags plus DESCRIPTIVE reference_map_aabb / authoritative_roi_aabb blocks that the evaluator did not read. Under the then-declarative gate it attributed the WHOLE outside set although its own declared region covered only 75.69% of the fork's outside points (9.37% upstream). v2 adds the machine-checkable `member_region` geometry that map_accuracy_eval.py v2.3.0 measures. The v1 descriptive blocks are replaced by member_region.include / member_region.exclude with the SAME numbers, so nothing is lost.",
+ "sha256_provenance_note": "The task brief supplied source_artifact_sha256=02efc00d948f5cbdd2a8f1dcba5285259a396928f5650bbb9bfcb75ba8b39861 for the seeded point cloud. That digest was verified on disk to belong to the RAW TUHH survey archive /home/lee/t21_wp2/datasets/raw/mcd/maps/tuhh_survey_map.zip, not to datasets/gt/mcd/tuhh_night_09_seeded.pcd. The cloud actually scored in both replays hashes to 103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c, which is the value used above (and the value recorded as ref_map_sha256 in both evaluation/results/replay_*.json and in freeze/inputs_manifest.json). The archive digest is retained separately below so nothing is lost.",
+ "source": "TUHH campus corridor extension beyond predefined ROI",
+ "source_artifact": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd",
+ "source_artifact_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+ "spatial_extent": "Reference map AABB minus authoritative ROI AABB",
+ "survey_archive": "/home/lee/t21_wp2/datasets/raw/mcd/maps/tuhh_survey_map.zip",
+ "survey_archive_sha256": "02efc00d948f5cbdd2a8f1dcba5285259a396928f5650bbb9bfcb75ba8b39861"
+}

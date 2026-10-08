@@ -1,0 +1,29 @@
+{
+ "bounds": {
+  "max": [
+   11.999822616577148,
+   12.006364822387695,
+   10.003280639648438
+  ],
+  "min": [
+   -113.62030029296875,
+   -91.34088897705078,
+   -3.3053243160247803
+  ]
+ },
+ "frame": "reference_map_frame",
+ "provenance": {
+  "author": "EvalContract (diagnostic helper)",
+  "derivation": "axis-aligned bounding box of the reference cloud, pad 0.000 m; no estimate and no residual enters this region",
+  "diagnostic_only": true,
+  "frozen_utc": null,
+  "independent_of_error": true,
+  "independent_of_estimate": true,
+  "notes": "DIAGNOSTIC ONLY: not observation-conditioned, cannot carry a PASS. The authoritative pre-defined ROI is BLOCKED pending DatasetQualification.",
+  "reference_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+  "source": "reference map extent only: /home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd"
+ },
+ "roi_id": "diagnostic_ref_aabb",
+ "schema_version": 1,
+ "type": "aabb"
+}

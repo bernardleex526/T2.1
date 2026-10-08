@@ -43,8 +43,10 @@ def repo_root():
 
 
 def eval_dir_default():
+    in_repo = os.path.join(repo_root(), "simulation", "evaluation")
+    if os.path.isdir(in_repo):
+        return in_repo
     return os.path.join(repo_root(), DEFAULT_EVAL_DIR)
-
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])

@@ -219,3 +219,39 @@ void IESKF::update()
                   << " (total over this process)" << std::endl;
     }
 }
+
+void IESKF::updateLegVelocity(const V3D &v_body_meas, const M3D &R_cov)
+{
+    // Measurement model: z = v_b_meas, h(x) = R_wi^T * v_w
+    V3D z_hat = m_x.r_wi.transpose() * m_x.v;
+    V3D res = v_body_meas - z_hat;
+
+    // Measurement Jacobian H: 3 x 21
+    Eigen::Matrix<double, 3, 21> H = Eigen::Matrix<double, 3, 21>::Zero();
+    M3D skew_v = Sophus::SO3d::hat(z_hat);
+    H.block<3, 3>(0, 0) = skew_v;
+    H.block<3, 3>(0, 12) = m_x.r_wi.transpose();
+
+    // Innovation covariance: S = H * P * H^T + R_cov
+    M3D S = H * m_P * H.transpose() + R_cov;
+    Eigen::LDLT<M3D> S_ldlt(S);
+    if (S_ldlt.info() != Eigen::Success)
+        return;
+
+    // Kalman gain: K = P * H^T * S^-1 (21 x 3)
+    Eigen::Matrix<double, 21, 3> K = m_P * H.transpose() * S_ldlt.solve(M3D::Identity());
+
+    // State error correction
+    V21D delta = K * res;
+    m_x += delta;
+    m_x.applyConstraints();
+
+    // Joseph-form covariance update: P = (I - K*H)*P*(I - K*H)^T + K*R*K^T
+    M21D I_KH = M21D::Identity() - K * H;
+    m_P = I_KH * m_P * I_KH.transpose() + K * R_cov * K.transpose();
+}
+
+void IESKF::updateZUPT(double cov)
+{
+    updateLegVelocity(V3D::Zero(), M3D::Identity() * cov);
+}

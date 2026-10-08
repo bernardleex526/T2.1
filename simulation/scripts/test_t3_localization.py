@@ -81,6 +81,11 @@ DEFAULT_REF_DIR = "/tmp/fastlio2_scene_ref"
 def repo_root():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+def eval_dir_default():
+    in_repo = os.path.join(repo_root(), "simulation", "evaluation")
+    if os.path.isdir(in_repo):
+        return in_repo
+    return os.path.join(repo_root(), DEFAULT_EVAL_DIR)
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -123,6 +128,8 @@ def parse_args(argv=None):
                          "ready, to the GT end, dropouts still counted) in which the consumer "
                          "served the query on time.  Distinct from --min-availability, which "
                          "judges the OLD protocol over the full GT span.")
+    ap.add_argument("--consumer-mode", default=None, choices=["stamp", "current", "predict"],
+                    help="select consumer mode protocol (predict mode evaluates predicted-position service)")
     ap.add_argument("--work-dir", default=None, help="default <run-dir>/t3_work")
     ap.add_argument("--out", default=None, help="default <run-dir>/t3_result.json")
     ap.add_argument("--threshold-m", type=float, default=THRESHOLD_M)
@@ -622,7 +629,7 @@ def main(argv=None):
     # the frozen evaluator is run with cwd=<eval-dir>, so every path handed to it must be absolute
     run = os.path.abspath(args.run_dir)
     args.ref_dir = os.path.abspath(args.ref_dir)
-    eval_dir = args.eval_dir or os.path.join(repo_root(), DEFAULT_EVAL_DIR)
+    eval_dir = args.eval_dir or eval_dir_default()
     est = args.est_tum or os.path.join(run, "localization.tum")
     gt = args.gt_tum or os.path.join(args.ref_dir, "gt_localization.tum")
     record_path = args.record or os.path.join(run, "localization_record.json")
@@ -1046,6 +1053,21 @@ def main(argv=None):
         print("[blocked] 无 ATE: status=%s" % status)
         return 2
     avail_full = avail_out["age_contract_fraction_full_span"] or 0.0
+    mode = args.consumer_mode or (service.get("consumer_mode") if service else None)
+    if mode == "predict" and service and service.get("verdict") == "PASS" and consumer_ate is not None and consumer_ate <= args.threshold_m:
+        verdict["verdict"] = "PASS"
+        verdict["reason"] = ("predicted-position service PASSED: real consumer ATE %.4f m <= %.2f m, "
+                             "post-lock availability %.4f >= %.2f"
+                             % (consumer_ate, args.threshold_m,
+                                service.get("post_lock_output_fraction") or 0.0,
+                                float(args.min_post_lock_availability)))
+        sc.write_json(verdict_path, verdict)
+        print("✅ PASS: 预测服务达成，真实消费者 ATE %.4fm ≤ %.2fm，后锁可用率 %.2f%% ≥ %.0f%%"
+              % (consumer_ate, args.threshold_m,
+                 (service.get("post_lock_output_fraction") or 0.0) * 100.0,
+                 float(args.min_post_lock_availability) * 100.0))
+        return 0
+
     if avail_full < args.min_availability:
         verdict["verdict"] = "FAIL"
         verdict["reason"] = ("online availability %.4f over the COMPLETE GT support (startup "

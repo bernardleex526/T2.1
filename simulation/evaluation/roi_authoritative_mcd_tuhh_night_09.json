@@ -1,0 +1,57 @@
+{
+ "bounds": {
+  "max": [
+   11.999822616577148,
+   12.006364822387695,
+   3.009902093
+  ],
+  "min": [
+   -14.046671723,
+   -0.215759547,
+   -2.745827057
+  ]
+ },
+ "frame": "reference_map_frame",
+ "gt_valid_support": {
+  "gt_sha256": "d591ef94f3b4a114d6b64f4dc3119236b9350e89333579d634deeb213c54bace",
+  "n_samples": 1833,
+  "t_max_s": 1666286230.8601966,
+  "t_min_s": 1666286047.672543
+ },
+ "invalid": true,
+ "invalid_reason": "FRAME-INCONSISTENT: the XY min corner is the RAW GT bbox in the MCD survey (world) frame while the XY max corner is the seeded reference-map AABB in reference_map_frame; the two corners live in different frames, so this is not a GT-intersect-coverage region, and its Z padding compensated for the cross-frame XY shrink. Measured: 84/1833 bridged GT samples (189/1833 raw survey-frame samples) inside; 21/1833 raw survey-frame samples inside the frame-consistent replacement.",
+ "prior_artifact_provenance": {
+  "note": "the provenance block of THIS artifact is the original one, preserved verbatim; the reason it is unusable and the replacement artifact are recorded in superseded_by",
+  "prior_sha256_before_invalidation_marker": "63b1ea0ea832b8dc2992ba28f08b0d10663d62be6984903b0bbe15184dd169ef",
+  "prior_sha256_note": "this is the hash the historical controlled-A/B results recorded as inputs.roi_sha256; those result files are NOT rewritten, so the mismatch documents exactly which bytes were scored",
+  "provenance_fields_preserved_verbatim": [
+   "author",
+   "derivation",
+   "frozen_utc",
+   "independent_of_error",
+   "independent_of_estimate",
+   "notes",
+   "reference_map_sha256",
+   "source"
+  ],
+  "reference_map_sha256_note": "this artifact's provenance.reference_map_sha256 (02efc00d948f5cbdd2a8f1dcba5285259a396928f5650bbb9bfcb75ba8b39861) is the RAW TUHH survey archive digest recorded by datasets/roi_generation_record.json, not the seeded cloud actually scored (103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c); it is preserved as-is, NOT corrected"
+ },
+ "provenance": {
+  "author": "A1AuthoritativeROI task",
+  "derivation": "axis-aligned bounding box of GT positions intersected with reference map AABB; reference map: tuhh_survey_map.zip; GT: mcd_tuhh_night_09_gt.tum",
+  "frozen_utc": "2026-09-29T09:31:11Z",
+  "independent_of_error": true,
+  "independent_of_estimate": true,
+  "notes": "Authoritative ROI: not diagnostic-only; no estimate map or residual entered derivation; sha256 inputs recorded in roi_generation_record.json | Z range expanded from [-1.746, 2.010] to [-2.746, 3.010] to achieve minimum denominator \u22651000 for map_accuracy_eval; XY bounds unchanged (GT trajectory \u00d7 reference map intersection); expansion stays within reference map Z coverage [-3.305, 10.003].",
+  "reference_map_sha256": "02efc00d948f5cbdd2a8f1dcba5285259a396928f5650bbb9bfcb75ba8b39861",
+  "source": "dataset GT trajectory valid support \u2229 reference map coverage"
+ },
+ "roi_id": "authoritative_gt_support_x_ref_coverage_mcd_tuhh_night_09",
+ "schema_version": 1,
+ "superseded_by": {
+  "artifact": "evaluation/roi_refframe_corrected_mcd_tuhh_night_09.json",
+  "note": "same derivation rule with BOTH corners in reference_map_frame; 1833/1833 bridged GT samples inside; frozen as the authoritative ROI (provenance.status FROZEN_AUTHORITATIVE)",
+  "roi_id": "authoritative_gt_support_x_ref_coverage_refframe_mcd_tuhh_night_09"
+ },
+ "type": "aabb"
+}

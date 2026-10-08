@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="quadruped_robot">
+
+  <!-- Arguments for sensor mounting transforms -->
+  <xacro:property name="imu_x" value="-0.0110"/>
+  <xacro:property name="imu_y" value="-0.02329"/>
+  <xacro:property name="imu_z" value="0.04412"/>
+  <xacro:property name="imu_roll" value="0.0"/>
+  <xacro:property name="imu_pitch" value="0.0"/>
+  <xacro:property name="imu_yaw" value="0.0"/>
+
+  <xacro:property name="lidar_x" value="0.0"/>
+  <xacro:property name="lidar_y" value="0.0"/>
+  <xacro:property name="lidar_z" value="0.0"/>
+  <xacro:property name="lidar_roll" value="0.0"/>
+  <xacro:property name="lidar_pitch" value="0.0"/>
+  <xacro:property name="lidar_yaw" value="0.0"/>
+
+  <!-- Base link (REP-105 body center) -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.65 0.30 0.15"/>
+      </geometry>
+      <material name="dark_grey">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- Legacy body frame (coincident with base_link) -->
+  <link name="body"/>
+  <joint name="base_to_body_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="body"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- IMU link -->
+  <link name="imu_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.03 0.03 0.015"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="base_to_imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="${imu_x} ${imu_y} ${imu_z}" rpy="${imu_roll} ${imu_pitch} ${imu_yaw}"/>
+  </joint>
+
+  <!-- RoboSense Airy / Odin1 LiDAR link -->
+  <link name="lidar_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.08"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0.0 0.3 0.8 1.0"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="base_to_lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="${lidar_x} ${lidar_y} ${lidar_z}" rpy="${lidar_roll} ${lidar_pitch} ${lidar_yaw}"/>
+  </joint>
+
+  <!-- Camera link (for FastLIVO2 upgrade) -->
+  <link name="camera_link"/>
+  <joint name="base_to_camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.055 -0.024 -0.036" rpy="0 0 0"/>
+  </joint>
+
+</robot>

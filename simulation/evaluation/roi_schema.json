@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Frozen static evaluation ROI / support domain (v2 contract)",
+  "description": "The common static support region must be pre-defined from REFERENCE coverage and observation conditions. It must NOT be derived from the estimated map bounding box and must NOT be filtered by the residual of this run. This schema is the only accepted form for the evaluator --roi input; map_accuracy_eval.py refuses any file that does not carry an independent provenance record.",
+  "type": "object",
+  "required": ["schema_version", "roi_id", "frame", "type", "provenance"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "roi_id": {"type": "string"},
+    "frame": {"type": "string", "description": "Frame the ROI bounds live in; must be the reference-map frame (e.g. survey/TLS frame)."},
+    "type": {"enum": ["aabb", "sphere", "polygon_2d_zrange"]},
+    "bounds": {
+      "type": "object",
+      "properties": {
+        "min": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "max": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "centre": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "radius_m": {"type": "number"},
+        "z_min_m": {"type": "number"},
+        "z_max_m": {"type": "number"},
+        "polygon_xy_m": {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source", "derivation", "frozen_utc", "author",
+                   "independent_of_estimate", "independent_of_error"],
+      "properties": {
+        "source": {"type": "string", "description": "Which upstream artifact defines the region (reference map + observation geometry)."},
+        "derivation": {"type": "string", "description": "Deterministic rule applied to that artifact."},
+        "derivation_script": {"type": "string"},
+        "derivation_script_sha256": {"type": "string"},
+        "reference_map_sha256": {"type": "string"},
+        "frozen_utc": {"type": "string"},
+        "author": {"type": "string"},
+        "independent_of_estimate": {"const": true, "description": "MUST be true: the region was not derived from the estimated map/bbox."},
+        "independent_of_error": {"const": true, "description": "MUST be true: the region was not selected/filtered using this run's residuals."},
+        "notes": {"type": "string"}
+      }
+    }
+  }
+}

@@ -1,0 +1,131 @@
+{
+ "baseline_commit": "04b73f553918b1dcc751feac69c0a2834f194432",
+ "differences_that_change_the_claim": [
+  "accuracy_measurable semantics: legacy true in both cases; new NOT_MEASURABLE / BLOCKED",
+  "legacy headline was computed after an unconditional full-map ICP; new treats ICP as a conditional diagnostic and forbids a PASS from a fitted registration",
+  "the new number is NOT comparable to the legacy number (different voxel, sampling rule, denominator, and ICP precondition) and must not be read as better or worse",
+  "the new evaluator records what the legacy one never did (coverage, denominator, bracket, degeneracy, region/normal stats, provenance)"
+ ],
+ "full_replays_consumed": 0,
+ "legacy": {
+  "legacy_time": {
+   "replay_1_upstream": {
+    "association_coverage": 0.9929539295392954,
+    "ate_raw_rmse_m": 265.46116407817584,
+    "ate_se3_aligned_rmse_m": 191.99238287597578
+   },
+   "replay_2_fork": {
+    "association_coverage": 0.996661101836394,
+    "ate_raw_rmse_m": 115.97425666064196,
+    "ate_se3_aligned_rmse_m": 3.104842610380184
+   }
+  },
+  "missing_from_legacy_report": [
+   "pre-defined region / ROI",
+   "fixed denominator",
+   "coverage of the reference support",
+   "no-correspondence and drifted-out split",
+   "pre/post-truncation bracket and exclusion rate",
+   "sampling voxel/grid origin/seed",
+   "normal estimator and orientation policy",
+   "weights",
+   "3-D coincidence (degeneracy)",
+   "regional and normal-direction stats",
+   "thin-structure / double-wall detection",
+   "sourced time mapping",
+   "frame chain / lever arm",
+   "transform independence provenance"
+  ],
+  "replay_1_upstream": {
+   "accuracy_measurable": true,
+   "coverage_within_5cm": 0.014153,
+   "icp": {
+    "final_fitness": 0.007077238300138191,
+    "final_inlier_rmse_m": 0.10161338232724432,
+    "rotation_deg": 8.370387396508304,
+    "translation_m": 4.283402954600885
+   },
+   "mode": "accuracy_vs_reference_map",
+   "p2p_rmse_m": 103.06615175154869,
+   "p2pl_max_m": 556.4529640179175,
+   "p2pl_median_m": 5.887753693652588,
+   "p2pl_p99_m": 508.0904741361855,
+   "p2pl_rmse_m": 151.19178548743173,
+   "verdict_pass": false
+  },
+  "replay_2_fork": {
+   "accuracy_measurable": true,
+   "coverage_within_5cm": 0.10272547082455812,
+   "icp": {
+    "final_fitness": 0.07616526680108252,
+    "final_inlier_rmse_m": 0.08724408093813771,
+    "rotation_deg": 2.69250225450462,
+    "translation_m": 0.6159293560245699
+   },
+   "mode": "accuracy_vs_reference_map",
+   "p2p_rmse_m": 3.8445,
+   "p2pl_max_m": 21.30787842998533,
+   "p2pl_median_m": 0.5846309061574579,
+   "p2pl_p99_m": 6.788301938587386,
+   "p2pl_rmse_m": 1.613507400626187,
+   "verdict_pass": false
+  }
+ },
+ "legacy_evaluator_outputs_read_only": [
+  "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_1_upstream/eval/map.json",
+  "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_2_fork/eval/map.json",
+  "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_1_upstream/eval/trajectory_gtinterp.json",
+  "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_2_fork/eval/trajectory_gtinterp.json"
+ ],
+ "new_v2_2": {
+  "replay_1_upstream": {
+   "blocker": "85.0% of the sampled estimated map lies OUTSIDE the frozen support region",
+   "denominator_fixed_n": 272529,
+   "est_outside_region_fraction": 0.849856042417077,
+   "est_outside_region_n": 1542589,
+   "est_sampled_total_n": 1815118,
+   "membership_hash": "bdf325e97fa49daf49832721f3c570d6792a26e6f5454083dd9d318d5af948ae",
+   "pass": null,
+   "primary_value_m": null,
+   "status": "NOT_MEASURABLE_LOW_COVERAGE"
+  },
+  "replay_2_fork": {
+   "denominator_fixed_n": 231432,
+   "diagnostic_would_be_status": "BLOCKED_FRAMES_UNALIGNED_NO_SOURCED_TRANSFORM",
+   "drifted_out_of_support_n": 98889,
+   "est_outside_region_fraction": 0.2263654566787788,
+   "est_sampled_total_n": 299149,
+   "estimate_coverage_of_reference": 0.00733,
+   "exact_coincidence_c2c_fraction": 0.0,
+   "membership_hash": "13a2a95f1efd7e3b72fa59222d228d41bf0ea859aa59de0ca43bbcbf0c03fb9d",
+   "no_correspondence_est_fraction": 0.96756,
+   "no_reference_locally_n": 125036,
+   "no_reference_radius_m": 1.0,
+   "p2p_rmse_m": 3.8819,
+   "p2pl_max_m": 18.7595,
+   "p2pl_median_m": 0.522,
+   "p2pl_p99_m": 10.2644,
+   "p2pl_raw_rmse_m": 2.1848768053985483,
+   "pass": null,
+   "reference_coverage_of_est": 0.03244,
+   "status": "DIAGNOSTIC_ONLY_ROI",
+   "unknown_states": [
+    "UNKNOWN_REGIONAL_GAP",
+    "UNKNOWN_SUPPORT_CLASSIFICATION"
+   ]
+  },
+  "settings": {
+   "ref_map": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd",
+   "roi": "results/roi_diagnostic_mcd_tuhh_night_09.json (diagnostic_only=true)",
+   "seed": 0,
+   "stat_voxel_m": 0.25,
+   "tool": "map_accuracy_eval.py v2.2.0"
+  }
+ },
+ "not_claimed": [
+  "no claim about the cause of the frame/model discrepancy (EvidenceAudit frame_consistency v2 is still under revision)",
+  "no extrapolation from C2C diagnostics to point-to-plane or to algorithm improvement",
+  "no accuracy PASS/FAIL for this baseline"
+ ],
+ "schema": "old_new_metric_audit/v1"
+}

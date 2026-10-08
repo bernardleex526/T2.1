@@ -86,6 +86,8 @@ public:
     void predict(const Input &inp, double dt, const M12D &Q);
 
     void update();
+    void updateLegVelocity(const V3D &v_body_meas, const M3D &R_cov);
+    void updateZUPT(double cov = 1e-4);
 
     State &x() { return m_x; }
 

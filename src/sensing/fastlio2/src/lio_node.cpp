@@ -16,6 +16,8 @@
 
 #include <pcl_conversions/pcl_conversions.h>
 #include "tf2_ros/transform_broadcaster.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -43,6 +45,10 @@ struct NodeConfig
     // 0(默认) = 取 i % lidar_filter_num == 0，与上游 FAST-LIO2 一致、行为不变；实验开关，
     // 未验证，只有 opt-in 的 lio_c2_experimental.yaml 会设置它。
     int pcl2_filter_phase = 0;
+    // 腿式里程计线速度观测
+    bool use_leg_odom = false;
+    std::string leg_odom_topic = "/dog/leg_odom";
+    double leg_odom_cov = 0.01;
 };
 
 struct StateData
@@ -76,9 +82,10 @@ public:
         
         m_service_callback_group = this->create_callback_group(
             rclcpp::CallbackGroupType::MutuallyExclusive);
-        
+        m_tf_buffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        m_tf_listener = std::make_shared<tf2_ros::TransformListener>(*m_tf_buffer);
+
         loadParameters();
-        
         // 初始化ROS2组件 - 使用回调组
         initializeSubscribersWithCallbackGroups();
         initializePublishers();
@@ -141,6 +148,16 @@ private:
             std::bind(&LIONode::imageCB, this, std::placeholders::_1),
             sub_options);
             
+        if (m_node_config.use_leg_odom)
+        {
+            m_leg_odom_sub = this->create_subscription<nav_msgs::msg::Odometry>(
+                m_node_config.leg_odom_topic,
+                rclcpp::SensorDataQoS(),
+                std::bind(&LIONode::legOdomCB, this, std::placeholders::_1),
+                sub_options);
+            RCLCPP_INFO(this->get_logger(), "Legged odometry observation ENABLED on topic: %s",
+                        m_node_config.leg_odom_topic.c_str());
+        }
         RCLCPP_INFO(this->get_logger(), "Subscribers initialized with callback group");
     }
 
@@ -210,6 +227,9 @@ private:
             // C2.3 sampling phase (PointCloud2 decimation): flat key, same convention as the
             // pcl2_* keys above.  Absent key keeps 0 = upstream `i % point_filter_num == 0`.
             if (config["pcl2_filter_phase"]) m_node_config.pcl2_filter_phase = config["pcl2_filter_phase"].as<int>();
+            if (config["use_leg_odom"]) m_node_config.use_leg_odom = config["use_leg_odom"].as<bool>();
+            if (config["leg_odom_topic"]) m_node_config.leg_odom_topic = config["leg_odom_topic"].as<std::string>();
+            if (config["leg_odom_cov"]) m_node_config.leg_odom_cov = config["leg_odom_cov"].as<double>();
 
             // MapBuilder配置
             if (config["lidar_filter_num"]) m_builder_config.lidar_filter_num = config["lidar_filter_num"].as<int>();
@@ -248,6 +268,10 @@ private:
             if (config["gravity_align"]) m_builder_config.gravity_align = config["gravity_align"].as<bool>();
             if (config["esti_il"]) m_builder_config.esti_il = config["esti_il"].as<bool>();
             if (config["point_quality_thresh"]) m_builder_config.point_quality_thresh = config["point_quality_thresh"].as<double>();
+            if (config["imu_lpf_enable"]) m_builder_config.imu_lpf_enable = config["imu_lpf_enable"].as<bool>();
+            if (config["imu_lpf_cutoff_hz"]) m_builder_config.imu_lpf_cutoff_hz = config["imu_lpf_cutoff_hz"].as<double>();
+            if (config["imu_saturation_detect"]) m_builder_config.imu_saturation_detect = config["imu_saturation_detect"].as<bool>();
+            if (config["imu_saturation_limit_mps2"]) m_builder_config.imu_saturation_limit_mps2 = config["imu_saturation_limit_mps2"].as<double>();
 
             // 雷达/IMU 适配配置
             if (config["lidar_type"]) m_builder_config.lidar_type = config["lidar_type"].as<std::string>();
@@ -270,7 +294,30 @@ private:
                 m_builder_config.r_il = q_il.toRotationMatrix();
                 m_builder_config.t_il = t_il;
             } else {
-                RCLCPP_WARN(this->get_logger(), "Missing or invalid ext_il parameter, using defaults");
+                RCLCPP_WARN(this->get_logger(), "Missing or invalid ext_il parameter, checking TF buffer...");
+                bool tf_found = false;
+                if (m_tf_buffer) {
+                    try {
+                        auto tf_stamped = m_tf_buffer->lookupTransform(
+                            "imu_link", "lidar_link", tf2::TimePointZero, tf2::durationFromSec(0.2));
+                        m_builder_config.t_il = V3D(tf_stamped.transform.translation.x,
+                                                    tf_stamped.transform.translation.y,
+                                                    tf_stamped.transform.translation.z);
+                        Eigen::Quaterniond q_tf(tf_stamped.transform.rotation.w,
+                                                tf_stamped.transform.rotation.x,
+                                                tf_stamped.transform.rotation.y,
+                                                tf_stamped.transform.rotation.z);
+                        if (q_tf.norm() > 0.0) q_tf.normalize();
+                        m_builder_config.r_il = q_tf.toRotationMatrix();
+                        tf_found = true;
+                        RCLCPP_INFO(this->get_logger(), "Successfully resolved ext_il from TF (imu_link -> lidar_link).");
+                    } catch (const tf2::TransformException &ex) {
+                        RCLCPP_WARN(this->get_logger(), "TF lookup imu_link->lidar_link failed: %s. Using default identity.", ex.what());
+                    }
+                }
+                if (!tf_found) {
+                    RCLCPP_WARN(this->get_logger(), "ext_il defaulting to identity");
+                }
             }
 
             if (config["ext_lc"] && config["ext_lc"].IsSequence() && config["ext_lc"].size() >= 7) {
@@ -386,6 +433,21 @@ private:
         }
         m_state_data.lidar_buffer.emplace_back(timestamp, cloud);
         m_state_data.last_lidar_time = timestamp;
+    }
+    void legOdomCB(const nav_msgs::msg::Odometry::SharedPtr msg)
+    {
+        V3D v_body(msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
+        M3D R_cov = M3D::Identity() * m_node_config.leg_odom_cov;
+        if (msg->twist.covariance[0] > 0.0 && msg->twist.covariance[7] > 0.0 && msg->twist.covariance[14] > 0.0)
+        {
+            R_cov(0, 0) = msg->twist.covariance[0];
+            R_cov(1, 1) = msg->twist.covariance[7];
+            R_cov(2, 2) = msg->twist.covariance[14];
+        }
+        if (m_kf)
+        {
+            m_kf->updateLegVelocity(v_body, R_cov);
+        }
     }
     
     void imageCB(const sensor_msgs::msg::Image::SharedPtr msg)
@@ -770,6 +832,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr m_pcl_lidar_sub;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr m_imu_sub;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr m_image_sub;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr m_leg_odom_sub;
 
     // ROS2发布者
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_body_cloud_pub;
@@ -781,7 +844,8 @@ private:
     // ROS2定时器和广播器
     rclcpp::TimerBase::SharedPtr m_timer;
     std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
-
+    std::shared_ptr<tf2_ros::Buffer> m_tf_buffer;
+    std::shared_ptr<tf2_ros::TransformListener> m_tf_listener;
     // 数据状态
     StateData m_state_data;
     SyncPackage m_package;

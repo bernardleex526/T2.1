@@ -5,6 +5,50 @@
 #include <chrono>
 #include <rclcpp/logging.hpp>
 
+// 2阶 Butterworth 低通滤波器 (Direct Form II Transposed)
+struct ButterworthLPF
+{
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    V3D s1 = V3D::Zero();
+    V3D s2 = V3D::Zero();
+    bool initialized = false;
+
+    void setup(double fc_hz, double fs_hz)
+    {
+        if (fc_hz <= 0.0 || fs_hz <= 0.0 || fc_hz >= 0.5 * fs_hz)
+        {
+            initialized = false;
+            return;
+        }
+        double k = std::tan(M_PI * fc_hz / fs_hz);
+        double k2 = k * k;
+        double norm = 1.0 / (1.0 + std::sqrt(2.0) * k + k2);
+        b0 = k2 * norm;
+        b1 = 2.0 * b0;
+        b2 = b0;
+        a1 = 2.0 * (k2 - 1.0) * norm;
+        a2 = (1.0 - std::sqrt(2.0) * k + k2) * norm;
+        s1.setZero();
+        s2.setZero();
+        initialized = true;
+    }
+
+    V3D filter(const V3D &in)
+    {
+        if (!initialized) return in;
+        V3D out = b0 * in + s1;
+        s1 = b1 * in - a1 * out + s2;
+        s2 = b2 * in - a2 * out;
+        return out;
+    }
+
+    void reset()
+    {
+        s1.setZero();
+        s2.setZero();
+    }
+};
+
 class IMUProcessor
 {
 public:
@@ -21,6 +65,7 @@ public:
     // message, buffer flush) that sequence has ended and the stale state would
     // ring into the new one.  No-op when the gait filter is disabled.
     void resetGaitFilter() { m_gait_filter.reset(); }
+    void resetAccLpf() { m_acc_lpf.reset(); }
 
     // True once a usable notch cascade is installed (config opted in AND the
     // frequencies survived validation).  Exposed for the startup log and for
@@ -45,6 +90,8 @@ private:
     // ingestion point below so every sample reaches the estimator through exactly one filter
     // pass - filtering in both initialize() and undistort() would run the same sample twice.
     gait::GaitNotchFilter m_gait_filter;
+    ButterworthLPF m_acc_lpf;
+    void configureAccLpf();
 
     // Configures the notch cascade from m_config and logs the verdict.  Called once from the
     // constructor.  When the config is disabled or invalid the filter stays inert and the IMU

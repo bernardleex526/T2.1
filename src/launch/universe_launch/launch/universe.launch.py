@@ -2,8 +2,9 @@ import os
 import launch
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess 
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution, LaunchConfiguration, EnvironmentVariable, ThisLaunchFileDir, Command, FindExecutable
+from launch.substitutions import PathJoinSubstitution, LaunchConfiguration, EnvironmentVariable, ThisLaunchFileDir, Command, FindExecutable, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
@@ -65,18 +66,48 @@ def generate_launch_description():
     body_base_pitch = LaunchConfiguration('body_base_pitch')
     body_base_yaw = LaunchConfiguration('body_base_yaw')
 
-    # 2. 原第一个脚本的节点：Livox+FAST-LIO2+ICP重定位+彩色点云显示
+    # 2. 传感器驱动与里程计
+    lidar_vendor = LaunchConfiguration('lidar_vendor', default='robosense')
+    config_file = LaunchConfiguration('config_file', default='airy.yaml')
+    is_robosense = PythonExpression(["'", lidar_vendor, "' == 'robosense'"])
+    is_livox = PythonExpression(["'", lidar_vendor, "' == 'livox'"])
+
+    ## RoboSense点云适配节点
+    rs_adapter_node = Node(
+        package='rs_to_fastlio',
+        executable='rs_to_fastlio_node',
+        name='rs_to_fastlio_node',
+        output='screen',
+        condition=IfCondition(is_robosense),
+        parameters=[{
+            'input_topic': '/rslidar_points',
+            'output_topic': '/rslidar_points_adapted',
+            'target_frame': 'lidar_link',
+            'min_range': 0.3,
+            'max_range': 50.0
+        }]
+    )
+
     ## Livox驱动节点
     livox_driver = Node(
         package='livox_ros_driver2',
         executable='livox_ros_driver2_node',
         name='livox_lidar_publisher',
         output='screen',
+        condition=IfCondition(is_livox),
         parameters=livox_ros2_params
     )
+
+    ## 四足机器人 REP-105 TF 树发布
+    rsp_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([FindPackageShare('quadruped_description'), 'launch', 'rsp.launch.py'])
+        )
+    )
+
     ## fastlio2建图节点
     sensing_config_path = PathJoinSubstitution(
-        [FindPackageShare("fastlio2"), "config", "lio.yaml"]
+        [FindPackageShare("fastlio2"), "config", config_file]
     )
     lio_node = Node(
         package="fastlio2",
@@ -84,7 +115,7 @@ def generate_launch_description():
         executable="lio_node",
         name="mapping_node",
         output="screen",
-        parameters=[{"config_path": sensing_config_path.perform(launch.LaunchContext())}]
+        parameters=[{"config_path": sensing_config_path}]
     )
     ## ICP重定位节点
     localizer_config_path = PathJoinSubstitution(
@@ -165,11 +196,16 @@ def generate_launch_description():
         output="screen"
     )
     ## 位姿输出节点
+    ## 位姿输出节点（配置预测模式满足 <= 5cm 指标）
     map_pose_node = Node(
         package="robot_pose",
         executable="map_pose_publisher",
         name="map_pose_publisher",
-        output="screen"
+        output="screen",
+        parameters=[{
+            "current_pose_mode": True,
+            "predict_current_pose": True
+        }]
     )
     ## 速度平滑节点
     cmd_smooth_node = Node(
@@ -222,10 +258,16 @@ def generate_launch_description():
 
     # 5. 整合所有节点/参数
     return LaunchDescription([
+        DeclareLaunchArgument('lidar_vendor', default_value='robosense',
+                              description='LiDAR vendor: robosense or livox'),
+        DeclareLaunchArgument('config_file', default_value='airy.yaml',
+                              description='FastLIO2 config file name'),
         declare_data_dir_arg,
         declare_map_arg,
         declare_use_sim_time_arg,
         *declare_body_ext_args,
+        rsp_launch,
+        rs_adapter_node,
         livox_driver,
         lio_node,
         multi_goal_manager_node,

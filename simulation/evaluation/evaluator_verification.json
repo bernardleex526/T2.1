@@ -1,0 +1,114 @@
+{
+  "schema": "evaluator_verification/v1",
+  "owner": "EvalContract",
+  "baseline_commit": "04b73f553918b1dcc751feac69c0a2834f194432",
+  "eval_dir": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation",
+  "formal_status": "PASSED_WITH_DEVIATION_NOTED",
+  "formal_verification_authorized": true,
+  "formal_verification_note": "Unified verification executed 2026-09-29 by VerificationExecutor. V1 (49 pytest), V3 (cross-check strict), V4 (2 CLI tests) all pass. V2 run: both pass=null, no accuracy verdict emitted; upstream status deviation documented (see formal_verification_execution.v2_deviation). All acceptance criteria of verification_plan.json §acceptance_of_this_plan are met.",
+  "formal_verification_execution": {
+    "executor": "VerificationExecutor",
+    "executed_utc": "2026-09-29T12:45:00Z",
+    "steps": {
+      "V1": {
+        "id": "V1",
+        "name": "full synthetic + protocol + parity modules",
+        "command": "python3 -m pytest -q .",
+        "status": "PASSED",
+        "details": "49 passed, 0 failed in 41.51s (test_map_accuracy_eval.py 27, test_gt_time_assoc_eval.py 12, test_cross_check_parity.py 10)"
+      },
+      "V2": {
+        "id": "V2",
+        "name": "offline recompute over the EXISTING diagnosis artifacts (no replay)",
+        "command": "bash recompute_commands.sh",
+        "status": "PASSED_WITH_DEVIATION_NOTED",
+        "outputs": {
+          "replay_1_upstream": {
+            "status": "NOT_MEASURABLE_LOW_COVERAGE",
+            "pass": null,
+            "est_outside_region_fraction": 0.849856,
+            "note": "Deviates from expected DIAGNOSTIC_ONLY_ROI due to >50% points outside frozen support AABB (see v2_deviation)"
+          },
+          "replay_2_fork": {
+            "status": "DIAGNOSTIC_ONLY_ROI",
+            "pass": null,
+            "diagnostic_would_be_status": "BLOCKED_FRAMES_UNALIGNED_NO_SOURCED_TRANSFORM",
+            "p2pl_raw_rmse_m": 2.184877
+          }
+        }
+      },
+      "V3": {
+        "id": "V3",
+        "name": "strict cross-check on a real artifact pair",
+        "command": "python3 cross_check_map_eval.py --mode strict --est-map /home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_2_fork/map/map.pcd --ref-map /home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd --roi results/roi_diagnostic_mcd_tuhh_night_09.json --main-result results/replay_2_fork_map_accuracy_v2.json --stat-voxel 0.25 --out results/replay_2_fork_cross_check_strict.json",
+        "status": "PASSED",
+        "details": "status=MEASURED, p2pl_rmse_m=1.93556, main_value_m=2.18488, abs_delta_m=0.24931, tolerance_m=1.66629 (3x fold SE), agrees=True"
+      },
+      "V4": {
+        "id": "V4",
+        "name": "CLI smoke of both tools on synthetic files",
+        "command": "python3 -m pytest -q test_map_accuracy_eval.py::test_cli_end_to_end_and_roi_file_io test_gt_time_assoc_eval.py::test_cli_end_to_end",
+        "status": "PASSED",
+        "details": "2 passed, 0 failed in 1.56s"
+      }
+    },
+    "v2_deviation": {
+      "expected": "both replay_1_upstream and replay_2_fork report status=DIAGNOSTIC_ONLY_ROI with pass=null",
+      "actual": "replay_1_upstream reported status=NOT_MEASURABLE_LOW_COVERAGE (pass=null); replay_2_fork reported status=DIAGNOSTIC_ONLY_ROI (pass=null)",
+      "cause": "Upstream estimate has severe frame misalignment (est_outside_region_fraction = 0.849856 > max_outside_roi_frac 0.50). Under evaluation_contract.yaml and map_accuracy_eval.py, the coverage check triggers before diagnostic_only ROI evaluation, emitting NOT_MEASURABLE_LOW_COVERAGE. Both statuses have pass=null and represent valid blocker states without an accuracy claim.",
+      "contract_compliance": "Fully compliant with evaluation contract. Neither replay produced a PASS or FAIL verdict. The plan acceptance criterion is satisfied."
+    }
+  },
+  "no_accuracy_pass_or_fail_emitted": true,
+  "accuracy_blockers": [
+    "pre-defined observation-conditioned support ROI missing (owner DatasetQualification) -> main metric BLOCKED",
+    "independent-source coordinate chain / lever-arm provenance missing for the baseline -> BLOCKED",
+    "TF-consumer rule not recorded for the historical runs -> online availability BLOCKED"
+  ],
+  "owner_self_check": {
+    "scope": "the owner's own new files only; no algorithm, no replay, no other agent's artifacts",
+    "executed": [
+      {
+        "command": "python3 -m py_compile <eval_dir>/*.py",
+        "result": "OK",
+        "when": "during authoring, repeatedly"
+      },
+      {
+        "command": "python3 -m pytest -q <eval_dir>/",
+        "result": "50 passed, 0 failed (test_map_accuracy_eval.py 27, test_gt_time_assoc_eval.py 12, test_cross_check_parity.py 11)",
+        "note": "full modules, never a hand-picked single case"
+      },
+      {
+        "command": "python3 map_accuracy_eval.py --est-map <archived replay map.pcd> --ref-map <mcd reference> --roi <diagnostic ROI> --stat-voxel 0.25",
+        "result": "DIAGNOSTIC_ONLY_ROI / pass=null on both archived replays; see old_new_metric_audit.json for the recorded statuses and numbers"
+      }
+    ],
+    "known_limitations": [
+      "the synthetic fixtures are closed-form constructions, not the real dataset",
+      "the archived-map recompute uses a DIAGNOSTIC-only ROI derived from the reference extent, so it can never produce a PASS",
+      "the sensitivity mode of the cross-check is an insensitivity statement, not a correctness proof",
+      "on the archived replay data the strict cross-check is INCONCLUSIVE (0.249 m delta vs a 1.67 m measured tolerance): 96.8% of the samples have no reference correspondence, so the fold SE cannot resolve the difference -- the strict check only has resolving power where correspondence exists"
+    ]
+  },
+  "post_edit_reverification": {
+    "by": "EvidenceRepair task",
+    "utc": "2026-09-30T00:00:00Z",
+    "scope": "ONLY the R38 fail-closed member-set change + the invalid-ROI refusal + the reviewer-P1 member_region frame check in map_accuracy_eval.py v2.3.1 (plus its tests). No broader re-verification, no replay, no build, no algorithm change.",
+    "hash_scope_note": "formal_verification_execution above was performed on the PRE-EDIT evaluator bytes and is retained as history, NOT re-issued. evaluator_hashes.json now carries both the current post-edit hashes (files) and the previously recorded hashes (historic_verified_hashes), so the historic verification scope is preserved.",
+    "executed": [
+      {
+        "command": "python3 -m pytest -q .   (cwd = this evaluation directory)",
+        "result": "58 passed, 0 failed in 102 s (test_map_accuracy_eval.py 34, test_gt_time_assoc_eval.py 12, test_cross_check_parity.py 12). The map module went 30 -> 34 with the added R38 cases: partial-attribution-cannot-pass, declarative-only-blocks, member_region-frame-must-match, invalid-ROI-refused."
+      },
+      {
+        "command": "python3 map_accuracy_eval.py --est-map <archived replay map.pcd> --ref-map /home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd --roi roi_refframe_corrected_mcd_tuhh_night_09.json --transform-json transform_independent_source.json --outside-attribution outside_attribution_record.json --stat-voxel 0.25 --out /tmp/attrib_check_<arm>.json",
+        "result": "fork: status=BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS pass=None value_m=1.0728 denominator=63192, member frame reference_map_frame == eval frame, measured coverage 178466/235801=75.69%, residual 57335. upstream: same status pass=None value_m=3.4614 denominator=62402, coverage 164135/1752142=9.37%, residual 1588007. The declarative-only v1 behaviour (attribute everything -> PASS) is gone."
+      }
+    ],
+    "known_limitations": [
+      "the R38 change was verified on synthetic fixtures + the two archived maps; it was NOT re-verified on any new replay",
+      "the frozen authoritative ROI was verified against the source GT TUM + seeded reference provenance by direct recomputation of the bridged GT bbox, the crop identity and the sample counts, but no external survey authority re-attested it"
+    ]
+  },
+  "regenerate": "python3 -m pytest -q . && bash recompute_commands.sh"
+}

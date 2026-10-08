@@ -1,0 +1,66 @@
+{
+ "claim": "same-estimand independent-arithmetic verification of the main metric",
+ "comparison": {
+  "abs_delta_m": 1.7763568394002505e-15,
+  "agrees": true,
+  "means": "the arithmetic is verified (machine precision); within the floating-point tolerance",
+  "sampling_uncertainty_is_not_a_correctness_standard": true,
+  "tolerance_m": 2.1848768053985486e-09,
+  "tolerance_relative_to_value": 1e-09,
+  "tolerance_source": "floating-point tolerance: identical estimand, independent arithmetic (1e-9 absolute / relative)",
+  "verdict": "agrees"
+ },
+ "denominator_n": 231432,
+ "independent_of_main": [
+  "normal estimator implementation (batched SVD)",
+  "residual expression",
+  "aggregation",
+  "sample-set extraction"
+ ],
+ "inputs": {
+  "est_map": "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_2_fork/map/map.pcd",
+  "est_map_sha256": "042fcd8f3f706d1e9e783c23df3cd4535a15353859707abf4466a86222f6410c",
+  "ref_map": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd",
+  "ref_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+  "roi": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation/results/roi_diagnostic_mcd_tuhh_night_09.json",
+  "roi_sha256": "bd36a985c721fee4381962d9633f5a668881c5cb4df3219e328de9afb8af9da0"
+ },
+ "main_value_m": 2.1848768053985483,
+ "mode": "strict",
+ "no_correspondence_fraction": 0.9675628262297349,
+ "p2p_rmse_m": 3.8819294159063227,
+ "p2p_stats": {
+  "p2p_max": 25.97129332140484,
+  "p2p_mean": 2.2977996179946163,
+  "p2p_median": 1.1704963385542633,
+  "p2p_min": 0.0011068741158400048,
+  "p2p_n": 231432,
+  "p2p_p95": 9.619526594587342,
+  "p2p_p99": 14.885479416575434,
+  "p2p_rmse": 3.8819294159063227
+ },
+ "p2pl_rmse_m": 2.1848768053985466,
+ "replaces_main_metric": false,
+ "roi_valid": true,
+ "sampling_uncertainty": {
+  "definition": "standard error of the per-fold RMSE over K disjoint chunks of the evaluation set (measured, not assumed)",
+  "fold_rmse": [
+   1.1789403567141354,
+   4.281520537829088,
+   0.9041891152105603,
+   0.9214033774948585,
+   1.5750262422987165
+  ],
+  "folds": 5,
+  "se_m": 0.6389374712896211
+ },
+ "seed": 7,
+ "shared_with_main": [
+  "NN library primitive",
+  "grid sampler (contract primitive)",
+  "region mask (contract primitive)",
+  "the normal ESTIMAND (neighbourhood definition)"
+ ],
+ "status": "MEASURED",
+ "tool": "cross_check_map_eval.py v2.2.0"
+}

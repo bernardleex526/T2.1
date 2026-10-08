@@ -1,7 +1,11 @@
+import os
 import launch
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
-from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
 ################### user configure parameters for ros2 start ###################
@@ -21,11 +25,11 @@ user_config_path = PathJoinSubstitution(
 
 # Octomap参数 - 优化版
 input_cloud_topic = '/mapping/world_cloud'
-resolution = 0.2  # 降低分辨率，从0.05提高到0.15，性能提升27倍
+resolution = 0.2
 octomap_frame_id = 'odom'
-base_frame_id = 'body'  # 建图阶段 lio 只发布 odom→body，此处用 body 而非 base_footprint 才有 TF
-height_map = False   # 关闭高度图，减少计算
-colored_map = False  # 关闭彩色地图，减少计算
+base_frame_id = 'body'
+height_map = False
+colored_map = False
 color_factor = 0.8
 filter_ground = False
 filter_speckles = False
@@ -33,8 +37,8 @@ ground_filter_distance = 0.04
 ground_filter_angle = 0.15
 ground_filter_plane_distance = 0.07
 compress_map = True
-incremental_2D_projection = False  # 关闭增量投影，减少计算
-sensor_model_max_range = 8.0  # 限制处理范围，减少数据量
+incremental_2D_projection = False
+sensor_model_max_range = 8.0
 sensor_model_hit = 0.7
 sensor_model_miss = 0.4
 sensor_model_min = 0.12
@@ -44,22 +48,18 @@ color_g = 0.0
 color_b = 1.0
 color_a = 1.0
 color_free_r = 0.0
-color_free_g = 0.0
-color_free_b = 1.0
+color_free_g = 1.0
+color_free_b = 0.0
 color_free_a = 1.0
 publish_free_space = False
+max_range = 10.0
+publish_freq_map = 1.0
+latch = False
+track_changes = False
+listen_changes = False
+max_z = 2.0
+min_z = -0.5
 
-# 新增性能优化参数
-max_range = 8.0  # 限制点云处理范围
-publish_freq_map = 1.0  # 降低地图发布频率
-latch = False  # 不保持最新消息
-track_changes = False  # 不跟踪变化
-listen_changes = False  # 不监听变化
-max_z = 2.0  # 最大高度限制
-min_z = 0.2  # 最小高度限制
-################### user configure parameters for ros2 end #####################
-
-# Livox参数配置
 livox_ros2_params = [
     {"xfer_format": xfer_format},
     {"multi_topic": multi_topic},
@@ -72,7 +72,6 @@ livox_ros2_params = [
     {"cmdline_input_bd_code": cmdline_bd_code}
 ]
 
-# Octomap参数配置 - 优化版
 octomap_params = [
     {"resolution": resolution},
     {"frame_id": octomap_frame_id},
@@ -101,7 +100,6 @@ octomap_params = [
     {"color_free/b": color_free_b},
     {"color_free/a": color_free_a},
     {"publish_free_space": publish_free_space},
-    # 新增性能参数
     {"max_range": max_range},
     {"publish_freq": publish_freq_map},
     {"latch": latch},
@@ -111,49 +109,75 @@ octomap_params = [
     {"min_z": min_z}
 ]
 
-
 def generate_launch_description():
-    
-    # mid360驱动
+    lidar_vendor = LaunchConfiguration('lidar_vendor', default='robosense')
+    config_file = LaunchConfiguration('config_file', default='airy.yaml')
+
+    is_robosense = PythonExpression(["'", lidar_vendor, "' == 'robosense'"])
+    is_livox = PythonExpression(["'", lidar_vendor, "' == 'livox'"])
+
+    # 1. RoboSense 点云转换适配节点
+    rs_adapter_node = Node(
+        package='rs_to_fastlio',
+        executable='rs_to_fastlio_node',
+        name='rs_to_fastlio_node',
+        output='screen',
+        condition=IfCondition(is_robosense),
+        parameters=[{
+            'input_topic': '/rslidar_points',
+            'output_topic': '/rslidar_points_adapted',
+            'target_frame': 'lidar_link',
+            'min_range': 0.3,
+            'max_range': 50.0
+        }]
+    )
+
+    # 2. Livox mid360驱动
     livox_driver = Node(
         package='livox_ros_driver2',
         executable='livox_ros_driver2_node',
         name='livox_lidar_publisher',
         output='screen',
+        condition=IfCondition(is_livox),
         parameters=livox_ros2_params
     )
 
-    # 建图节点配置路径
-    sensing_config_path = PathJoinSubstitution(
-        [FindPackageShare("fastlio2"), "config", "lio.yaml"]
+    # 3. 四足机器人 REP-105 TF 树发布 (base_link -> imu_link / lidar_link)
+    rsp_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([FindPackageShare('quadruped_description'), 'launch', 'rsp.launch.py'])
+        )
     )
 
-    # lio建图节点
+    # 4. 建图节点配置路径
+    sensing_config_path = PathJoinSubstitution(
+        [FindPackageShare("fastlio2"), "config", config_file]
+    )
+
+    # 5. lio建图节点
     lio_node = Node(
         package="fastlio2",
         namespace="mapping",
         executable="lio_node",
         name="mapping_node",
         output="screen",
-        parameters=[{"config_path": sensing_config_path.perform(launch.LaunchContext())}]
+        parameters=[{"config_path": sensing_config_path}]
     )
 
-    # pgo配置路径
+    # 6. pgo配置路径与节点
     pgo_config_path = PathJoinSubstitution(
         [FindPackageShare("pgo"), "config", "pgo.yaml"]
     )
-
-    # pgo节点
     pgo_node = Node(
         package="pgo",
         namespace="pgo",
         executable="pgo_node",
         name="pgo_node",
         output="screen",
-        parameters=[{"config_path": pgo_config_path.perform(launch.LaunchContext())}]
+        parameters=[{"config_path": pgo_config_path}]
     )
 
-    # octomap_server节点 - 优化版本
+    # 7. octomap_server节点
     octomap_server = Node(
         package='octomap_server2',
         executable='octomap_server',
@@ -164,24 +188,15 @@ def generate_launch_description():
         parameters=octomap_params
     )
 
-    # rviz配置路径
-    rviz_cfg = PathJoinSubstitution(
-        [FindPackageShare("fastlio2"), "rviz", "fastlio2.rviz"]
-    )
-
-    # 启动rviz
-    rviz_screen = Node(
-        package="rviz2",
-        executable="rviz2",
-        name="rviz2",
-        output="screen",
-        arguments=["-d", rviz_cfg.perform(launch.LaunchContext())],
-    )
-
     return LaunchDescription([
+        DeclareLaunchArgument('lidar_vendor', default_value='robosense',
+                              description='LiDAR vendor: robosense or livox'),
+        DeclareLaunchArgument('config_file', default_value='airy.yaml',
+                              description='FastLIO2 config file name (e.g. airy.yaml, odin1.yaml, lio.yaml)'),
+        rsp_launch,
+        rs_adapter_node,
         livox_driver,
         lio_node,
         pgo_node,
-        octomap_server,  # 启用 octomap 以产出 /octomap/projected_map，供 map_saver 生成 2D 栅格地图
-        #rviz_screen
+        octomap_server
     ])

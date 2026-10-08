@@ -1,0 +1,124 @@
+{
+ "bounds": {
+  "max": [
+   0.0,
+   0.0064150364781738745,
+   3.406991887225236
+  ],
+  "min": [
+   -101.62035728487919,
+   -79.3409634596976,
+   -0.41420407840745255
+  ]
+ },
+ "frame": "reference_map_frame",
+ "gt_valid_support": {
+  "gt_sha256": "d591ef94f3b4a114d6b64f4dc3119236b9350e89333579d634deeb213c54bace",
+  "n_samples": 1833,
+  "t_max_s": 1666286230.8601966,
+  "t_min_s": 1666286047.672543
+ },
+ "provenance": {
+  "author": "B1bFixROI task",
+  "derivation": "axis-aligned bounding box of the GT positions bridged into ref_map_frame with transform_independent_source.json.ref_frame_definition.survey_to_ref_matrix, intersected with the reference map AABB; GT is the raw MCD survey (world) frame trajectory (mcd_tuhh_night_09_gt.tum), reference map is the ref_map_frame cloud (tuhh_night_09_seeded.pcd, ref_map_frame = survey_to_ref_matrix @ survey frame)",
+  "derivation_inputs": {
+   "bridged_gt_bbox_ref_frame": {
+    "max": [
+     0.0,
+     0.0064150364781738745,
+     3.406991887225236
+    ],
+    "min": [
+     -101.62035728487919,
+     -79.3409634596976,
+     -0.41420407840745255
+    ]
+   },
+   "crop_margin_m": [
+    12.0,
+    12.0,
+    8.0
+   ],
+   "gt_bbox_survey_frame": {
+    "max": [
+     54.574219069,
+     111.618162575,
+     2.009902093
+    ],
+    "min": [
+     -14.046671723,
+     -0.215759547,
+     -1.745827057
+    ]
+   },
+   "gt_file": "/home/lee/t21_wp2/datasets/gt/mcd_tuhh_night_09_gt.tum",
+   "gt_sha256": "d591ef94f3b4a114d6b64f4dc3119236b9350e89333579d634deeb213c54bace",
+   "reference_map_aabb": {
+    "max": [
+     11.99982221913436,
+     12.00636476937984,
+     10.003280400815452
+    ],
+    "min": [
+     -113.6203036248963,
+     -91.34089276191264,
+     -3.3053242710034176
+    ]
+   },
+   "reference_map_file": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd",
+   "reference_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+   "rule": "ref_map_frame bbox of (survey_to_ref_matrix @ raw GT positions) INTERSECT reference_map_aabb; the intersection equals the bridged GT bbox exactly because the seeded crop contains it with >= 12 m XY / 8 m Z margin",
+   "seed_provenance_file": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd.provenance.json",
+   "seed_provenance_sha256": "6dd116aaf6d6a3fc7d59dcc663dd847c795b8d3b71743cd9b296b09a3ec1c746",
+   "source_only_note": "only the raw GT trajectory, the recorded seed bridge (survey_to_ref_matrix, itself taken from the seeded reference-map provenance) and the reference-map AABB enter this derivation; no estimate map, no residual, no point count and no voxel grid enters it",
+   "survey_to_ref_matrix": [
+    [
+     0.7624715647705619,
+     0.6469717119841344,
+     0.008044675789344055,
+     -96.95440253113966
+    ],
+    [
+     -0.6467051618319479,
+     0.7624284938485262,
+     -0.021799665772241367,
+     -64.13687262951808
+    ],
+    [
+     -0.020237257130918243,
+     0.011419091914602816,
+     0.9997299924297404,
+     0.8064037948415705
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "verified_crop_identity": "tuhh_night_09_seeded.pcd.provenance.json crop_aabb_min/max == bridged GT bbox_min/max -/+ (12,12,8) m (checked to <1e-6 m), i.e. the seeded reference map was cropped around exactly this bridged GT box",
+   "verified_samples_inside": "1833/1833 bridged GT samples inside this aabb; 21/1833 only for the raw survey-frame GT coordinates (the frame mixing of the superseded artifact)"
+  },
+  "frozen_as_authoritative": true,
+  "frozen_as_authoritative_by": "EvidenceRepair task",
+  "frozen_as_authoritative_utc": "2026-09-30T00:00:00Z",
+  "frozen_utc": "2026-09-29T09:40:00Z",
+  "independent_of_error": true,
+  "independent_of_estimate": true,
+  "notes": "FROZEN AUTHORITATIVE ROI (status FROZEN_AUTHORITATIVE, 2026-09-30). Author B1bFixROI derived it to correct a FRAME INCONSISTENCY in roi_authoritative_mcd_tuhh_night_09.json: that artifact's XY min corner equals the RAW GT bbox in the MCD survey frame (roi_generation_record.gt_bbox == survey provenance gt_path_bbox = [-14.046671723,-0.215759547,-1.745827057]) while its XY max corner equals the ref_map_frame reference-map AABB (roi_generation_record.reference_map_bounds == tuhh_night_09_seeded.pcd bbox_out max [11.999822616577148,12.006364822387695,10.003280639648438]); those two corners live in different frames, so the box is not a GT-intersect-coverage region and 84/1833 bridged GT samples (vs 189/1833 raw survey-frame samples) fall inside it. Here BOTH corners are computed in reference_map_frame, the frame the estimator is evaluated in, by the SAME rule as the original derivation. Cross-check from the reference-map provenance itself: tuhh_night_09_seeded.pcd.provenance.json crop_aabb_min = [bridged GT min - (12,12,8)] and crop_aabb_max = [bridged GT max + (12,12,8)] exactly, i.e. the seeded reference map was cropped around precisely this bridged GT box, and the box lies >=12 m inside the reference coverage on every side. NO z expansion is required: the plain rule z = bridged GT z extent [-0.414, 3.407] already yields denominators far above the 1000 minimum (fork-smoke 59641, replay_2_fork 63192 on the frozen 0.25 m sampling grid); the z padding in the old artifact was compensating for the cross-frame XY shrink. Independence: only GT, the bridge matrix and the reference map AABB enter; no estimate map and no residual enters, so independent_of_estimate and independent_of_error both hold. The superseded frame-inconsistent artifact is left in place with its own provenance intact (see provenance.supersedes).",
+  "reference_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+  "source": "dataset GT trajectory valid support \u2229 reference map coverage, both in reference_map_frame",
+  "status": "FROZEN_AUTHORITATIVE",
+  "supersedes": {
+   "artifact": "evaluation/roi_authoritative_mcd_tuhh_night_09.json",
+   "preserved_prior_sha256": "63b1ea0ea832b8dc2992ba28f08b0d10663d62be6984903b0bbe15184dd169ef",
+   "preserved_prior_sha256_note": "hash of the original bytes of the superseded artifact; it is the value the historical controlled-A/B results recorded as inputs.roi_sha256 (those result files are NOT rewritten)",
+   "prior_provenance_preserved": true,
+   "reason": "FRAME-INCONSISTENT: XY min corner in the MCD survey (world) frame, XY max corner in reference_map_frame; Z padding compensated for the cross-frame XY shrink. Measured: 84/1833 bridged GT samples (189/1833 raw survey-frame samples) inside."
+  }
+ },
+ "roi_id": "authoritative_gt_support_x_ref_coverage_refframe_mcd_tuhh_night_09",
+ "schema_version": 1,
+ "type": "aabb"
+}

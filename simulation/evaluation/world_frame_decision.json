@@ -1,0 +1,15 @@
+{
+  "decision_id": "world-frame-mcd-tuhh-night09-v1",
+  "dataset": "mcd_tuhh_night_09",
+  "selected_option": "option_1_reference_map_frame",
+  "world_frame": "MCD TUHH campus survey map frame",
+  "rationale": "Reference map produced by 124-station TLS registration with sphere-target alignment <10 mm and total-station verification <5 cm. GT is map-derived (continuous-time B-spline fitted to LiDAR+IMU registered to this map). Primary evaluation metric is point-to-plane RMSE of estimated map to reference map; using the reference map frame is most direct and requires no additional transform.",
+  "tls_instrument": "Leica RTC360 + FARO Focus, 124 stations",
+  "tls_registration": "sphere-target, residual <10 mm; total-station check <5 cm",
+  "absolute_orientation": "not recorded (TLS relative registration only)",
+  "gt_relationship": "GT = continuous-time B-spline fitted to LiDAR+IMU data registered to this map (map-derived GT)",
+  "independence_note": "Reference map was produced independently of this project's mapping process. GT and reference map share the same TLS base, hence GT is not a fully independent ground truth relative to the map metric.",
+  "option_2_rejected": "GT body frame at t0 (VN200 IMU) requires mocap body\u2192IMU extrinsics that are not available for night_09; blocked.",
+  "generated_utc": "2026-09-29T08:13:59Z",
+  "author": "A2WorldFrameDecision task"
+}

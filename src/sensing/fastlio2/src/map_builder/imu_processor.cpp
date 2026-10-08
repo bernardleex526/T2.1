@@ -20,6 +20,19 @@ IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config
     m_poses_cache.clear();
     m_pushed = true;
     configureGaitFilter();
+    configureAccLpf();
+}
+
+void IMUProcessor::configureAccLpf()
+{
+    if (!m_config.imu_lpf_enable)
+        return;
+    m_acc_lpf.setup(m_config.imu_lpf_cutoff_hz, m_config.gait_filter_sample_rate_hz);
+    if (m_acc_lpf.initialized)
+    {
+        RCLCPP_INFO(m_logger, "Butterworth 2nd-order Accel LPF ACTIVE: fc=%.1f Hz, fs=%.1f Hz",
+                    m_config.imu_lpf_cutoff_hz, m_config.gait_filter_sample_rate_hz);
+    }
 }
 
 void IMUProcessor::configureGaitFilter()
@@ -79,17 +92,19 @@ void IMUProcessor::configureGaitFilter()
 
 void IMUProcessor::ingestImu(const Vec<IMUData> &samples)
 {
-    if (!m_gait_filter.valid())
-    {
-        m_imu_cache.insert(m_imu_cache.end(), samples.begin(), samples.end());
-        return;
-    }
     m_imu_cache.reserve(m_imu_cache.size() + samples.size());
     for (const IMUData &s : samples)
     {
         IMUData filtered = s;
-        filtered.gyro = m_gait_filter.filterGyro(s.gyro);
-        filtered.acc = m_gait_filter.filterAccel(s.acc);
+        if (m_acc_lpf.initialized)
+        {
+            filtered.acc = m_acc_lpf.filter(s.acc);
+        }
+        if (m_gait_filter.valid())
+        {
+            filtered.gyro = m_gait_filter.filterGyro(filtered.gyro);
+            filtered.acc = m_gait_filter.filterAccel(filtered.acc);
+        }
         m_imu_cache.push_back(filtered);
     }
 }
@@ -280,8 +295,12 @@ void IMUProcessor::undistort(SyncPackage &package)
 
         inp.acc = acc_val;
         inp.gyro = gyro_val;
-        m_kf->predict(inp, dt, m_Q);
-
+        M12D Q_step = m_Q;
+        if (m_config.imu_saturation_detect && acc_val.norm() > m_config.imu_saturation_limit_mps2)
+        {
+            Q_step.block<3, 3>(3, 3) *= 10000.0; // inflate accel cov 10000x during impact saturation
+        }
+        m_kf->predict(inp, dt, Q_step);
         m_last_gyro = gyro_val - m_kf->x().bg;
         m_last_acc = m_kf->x().r_wi * (acc_val - m_kf->x().ba) + m_kf->x().g;
         double offset = tail.time - cloud_time_begin;

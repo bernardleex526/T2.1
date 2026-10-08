@@ -1,0 +1,444 @@
+{
+ "alignment": {
+  "applied": "identity (no transform applied)",
+  "forbidden_ops_used": [],
+  "per_block": false,
+  "rotation_deg": 0.0,
+  "scale": 1.0,
+  "translation_m": 0.0
+ },
+ "blocker": "the supplied support region is marked diagnostic_only: it is not an observation-conditioned pre-defined region and can never carry a PASS. The authoritative ROI must come from DatasetQualification.",
+ "brackets": {
+  "degeneracy": {
+   "definition": "3-D point coincidence: fraction of the fixed denominator whose C2C distance to the nearest reference point is <= 1e-6 m",
+   "exact_coincidence_c2c_fraction": 0.0,
+   "exact_coincidence_c2c_n": 0,
+   "hard_block_fraction": 0.99,
+   "warn_fraction": 0.05,
+   "zero_plane_residual_fraction": 0.0,
+   "zero_plane_residual_note": "a zero point-to-plane residual only means the normal matched; it is NOT a coincidence and must never be used as a degeneracy signal"
+  },
+  "fixed_denominator_definition": "estimated-map samples on the frozen grid inside the frozen region, selected BEFORE any truncation / exclusion",
+  "point_to_plane": {
+   "denominator_fixed_n": 272529,
+   "exact_coincidence_fraction": 0.0,
+   "exact_coincidence_n": 0,
+   "raw": {
+    "p2pl_max": 35.64884350804654,
+    "p2pl_mean": 0.8713227108826971,
+    "p2pl_median": 0.5788095708759927,
+    "p2pl_min": 2.538051812727125e-06,
+    "p2pl_n": 272529,
+    "p2pl_p95": 2.5999203738184398,
+    "p2pl_p99": 4.364843375094066,
+    "p2pl_rmse": 1.3217438634872432
+   },
+   "truncation_applied": false,
+   "truncation_threshold_m": null
+  },
+  "point_to_point": {
+   "denominator_fixed_n": 272529,
+   "exact_coincidence_fraction": 0.0,
+   "exact_coincidence_n": 0,
+   "raw": {
+    "p2p_max": 36.06552383930482,
+    "p2p_mean": 1.485040154125989,
+    "p2p_median": 1.108374431646594,
+    "p2p_min": 0.001028084826545167,
+    "p2p_n": 272529,
+    "p2p_p95": 3.969634242374238,
+    "p2p_p99": 7.348718197278728,
+    "p2p_rmse": 2.229479133644293
+   },
+   "truncation_applied": false,
+   "truncation_threshold_m": null
+  },
+  "raw_and_truncated_both_reported": true,
+  "truncation_cannot_promote_a_pass": true,
+  "truncation_default": "none (the headline number is the RAW rmse over the fixed denominator; --truncate-at only adds a diagnostic bracket)"
+ },
+ "coverage_floor": 0.3,
+ "diagnostic_would_be_pass": null,
+ "diagnostic_would_be_status": "BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS",
+ "est_points_in": 8923192,
+ "est_to_ref_point_to_plane": {
+  "p2pl_frac_within_0p02": 0.02645590010604376,
+  "p2pl_frac_within_0p05": 0.06452524318512892,
+  "p2pl_max": 35.64884350804654,
+  "p2pl_mean": 0.8713227108826971,
+  "p2pl_median": 0.5788095708759927,
+  "p2pl_min": 2.538051812727125e-06,
+  "p2pl_n": 272529,
+  "p2pl_p95": 2.5999203738184398,
+  "p2pl_p99": 4.364843375094066,
+  "p2pl_rmse": 1.3217438634872432,
+  "p2pl_signed_mean": 0.05911691516772938,
+  "p2pl_signed_median": 0.03763323401382497
+ },
+ "est_to_ref_point_to_point": {
+  "p2p_frac_within_0p02": 0.0014163630292556022,
+  "p2p_frac_within_0p05": 0.009683373145610193,
+  "p2p_max": 36.06552383930482,
+  "p2p_mean": 1.485040154125989,
+  "p2p_median": 1.108374431646594,
+  "p2p_min": 0.001028084826545167,
+  "p2p_n": 272529,
+  "p2p_p95": 3.969634242374238,
+  "p2p_p99": 7.348718197278728,
+  "p2p_rmse": 2.229479133644293
+ },
+ "icp": {
+  "applied": false,
+  "mode": "off"
+ },
+ "inputs": {
+  "est_map": "/home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_1_upstream/map/map.pcd",
+  "est_map_sha256": "41369bb2d041623058bae101a00881f01794a44c038bf61602a35e30fdd8319b",
+  "ref_map": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd",
+  "ref_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+  "roi": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation/results/roi_diagnostic_mcd_tuhh_night_09.json",
+  "roi_sha256": "bd36a985c721fee4381962d9633f5a668881c5cb4df3219e328de9afb8af9da0"
+ },
+ "is_ate": false,
+ "is_cloud_to_cloud": false,
+ "main_metric": "map est->ref point-to-plane RMSE on the frozen support region",
+ "membership": {
+  "attributed_outside_n": 0,
+  "definition": "the estimated map sampled on the frozen grid over the WHOLE map; the frozen region then selects the evaluation subset. The sampling is independent of every residual and of the reference cloud.",
+  "est_in_region_n": 272529,
+  "est_outside_region_fraction": 0.849856042417077,
+  "est_outside_region_n": 1542589,
+  "est_sampled_total_n": 1815118,
+  "membership_hash": "bdf325e97fa49daf49832721f3c570d6792a26e6f5454083dd9d318d5af948ae",
+  "outside_region_attribution": {
+   "attributed": false,
+   "record": null,
+   "required": true,
+   "rule": "no tolerance fraction: unattributed points outside the frozen region block an overall PASS while the raw value and the exclusion counts stay reported"
+  },
+  "unattributed_outside_n": 1542589
+ },
+ "min_denominator": 1000,
+ "normal_direction": {
+  "x": {
+   "n_frac": 0.27968032759816386,
+   "p2pl_x_max": 35.64884350804654,
+   "p2pl_x_mean": 0.9712001916709868,
+   "p2pl_x_median": 0.5822380894456656,
+   "p2pl_x_min": 1.4293982643701075e-05,
+   "p2pl_x_n": 76221,
+   "p2pl_x_p95": 3.224318228770814,
+   "p2pl_x_p99": 5.094686135677424,
+   "p2pl_x_rmse": 1.5690092729779657
+  },
+  "y": {
+   "n_frac": 0.28239196562567653,
+   "p2pl_y_max": 33.733352352081965,
+   "p2pl_y_mean": 0.8810628342762034,
+   "p2pl_y_median": 0.5552356938287475,
+   "p2pl_y_min": 3.5397001776661663e-06,
+   "p2pl_y_n": 76960,
+   "p2pl_y_p95": 2.751069813578807,
+   "p2pl_y_p99": 4.536975733220308,
+   "p2pl_y_rmse": 1.3789786868025689
+  },
+  "z": {
+   "n_frac": 0.4379277067761596,
+   "p2pl_z_max": 10.024557826234311,
+   "p2pl_z_mean": 0.801255668623686,
+   "p2pl_z_median": 0.5913521613025228,
+   "p2pl_z_min": 2.538051812727125e-06,
+   "p2pl_z_n": 119348,
+   "p2pl_z_p95": 2.195352520397961,
+   "p2pl_z_p99": 3.1425281121547193,
+   "p2pl_z_rmse": 1.09125532882044
+  }
+ },
+ "normal_direction_note": "reference-normal dominant axis classes; one wall set can look good globally while another is off",
+ "normals": {
+  "degenerate_at_nn_n": 0,
+  "estimator": "PCA over k nearest reference points within a fixed radius, queried AT the reference neighbour position",
+  "k": 15,
+  "orientation_sensitivity": "none -- residual uses |d . n|",
+  "radius_m": 0.15,
+  "seed": 0,
+  "source_cloud": "FULL reference cloud (never the estimate)"
+ },
+ "notes": null,
+ "outside_region_would_be_status": "FAIL",
+ "pass": null,
+ "pass_preconditions": {
+  "denominator_ge_min": true,
+  "frames_aligned_by_sourced_transform_or_identity": false,
+  "outside_region_points_attributed": false,
+  "overlap_coverage_ge_floor": false,
+  "predefined_roi_with_provenance": true,
+  "reference_coverage_ge_floor": false,
+  "reference_members_classifiable": false,
+  "registration_not_fitted_on_eval_data": true,
+  "sampling_not_degenerate": true,
+  "support_classifiable": false,
+  "transform_fit_samples_disjoint_from_eval": true,
+  "transform_independent_source": true
+ },
+ "primary_metric": {
+  "auxiliary_metrics_have_no_passing_line": true,
+  "denominator_fixed_n": 272529,
+  "diagnostic_only_roi": true,
+  "name": "map est->ref point-to-plane RMSE on the frozen support region",
+  "pass": null,
+  "raw_value_m": 1.3217438634872432,
+  "threshold_m": 0.05,
+  "truncated_value_m": null,
+  "truncation_cannot_promote_a_pass": true,
+  "value_m": 1.3217438634872432
+ },
+ "protocol": "evaluation_contract.yaml",
+ "ref_points_in": 6116925,
+ "ref_to_est_point_to_point": {
+  "p2p_rev_frac_within_0p02": 4.6823165292796955e-05,
+  "p2p_rev_frac_within_0p05": 0.0009762629963548166,
+  "p2p_rev_max": 22.532325225194615,
+  "p2p_rev_mean": 3.4073570189131845,
+  "p2p_rev_median": 1.9852737442216724,
+  "p2p_rev_min": 0.0033814500265519367,
+  "p2p_rev_n": 427139,
+  "p2p_rev_p95": 12.711733158038225,
+  "p2p_rev_p99": 16.648159253250913,
+  "p2p_rev_rmse": 5.117717728676247
+ },
+ "reference_anchored": {
+  "coverage_of_reference_members": 0.00816596002706379,
+  "definition": "reference grid samples inside the frozen region: fixed before any run and independent of where the estimate went",
+  "drifted_fraction": 0.3079184995984914,
+  "drifted_n": 131524,
+  "estimate_absent_locally_fraction": 0.6839155403744449,
+  "estimate_absent_locally_n": 292127,
+  "estimate_absent_note": "no estimate sample within 1.0 m: 'the estimate drifted away' and 'the estimate never covered here' cannot be distinguished",
+  "member_hash": "f947594309c703ff30aad6a4493caabcbe1e2906d1871b30f294d8f85620973d",
+  "note": "the reference-anchored residual is the point-to-plane distance of the NEAREST estimate sample to the pre-declared reference member; a region the estimate abandoned shows up as drift or as 'estimate absent', never as a deletion",
+  "p2pl_stats": {
+   "p2pl_ref_anchored_max": 21.526024252485715,
+   "p2pl_ref_anchored_mean": 1.6592694904185505,
+   "p2pl_ref_anchored_median": 0.7850665971133219,
+   "p2pl_ref_anchored_min": 5.98282452773935e-07,
+   "p2pl_ref_anchored_n": 427139,
+   "p2pl_ref_anchored_p95": 6.047464582496046,
+   "p2pl_ref_anchored_p99": 11.600823785340438,
+   "p2pl_ref_anchored_rmse": 2.798806713387227
+  },
+  "predeclared_membership_n": 427139,
+  "supported_n": 3488
+ },
+ "regional": {
+  "octant_000": {
+   "p2pl_frac_within_0p05": 0.06431220939344862,
+   "p2pl_max": 9.956766838093627,
+   "p2pl_mean": 0.7959256536889554,
+   "p2pl_median": 0.5626468334235576,
+   "p2pl_min": 2.1823377806332034e-05,
+   "p2pl_n": 19141,
+   "p2pl_p95": 2.248111842285024,
+   "p2pl_p99": 3.1506812328816345,
+   "p2pl_rmse": 1.0955945081886225
+  },
+  "octant_001": {
+   "p2pl_frac_within_0p05": 0.06001735061384369,
+   "p2pl_max": 20.450846335804865,
+   "p2pl_mean": 0.8392378876267531,
+   "p2pl_median": 0.5542997089948911,
+   "p2pl_min": 1.4293982643701075e-05,
+   "p2pl_n": 76078,
+   "p2pl_p95": 2.5013255044892873,
+   "p2pl_p99": 4.36005003704052,
+   "p2pl_rmse": 1.2922473696062946
+  },
+  "octant_010": {
+   "p2pl_frac_within_0p05": 0.054423667317890036,
+   "p2pl_max": 6.91926932605149,
+   "p2pl_mean": 0.9108568550918054,
+   "p2pl_median": 0.6100301276698181,
+   "p2pl_min": 0.0002424249802761569,
+   "p2pl_n": 3583,
+   "p2pl_p95": 2.870776756457178,
+   "p2pl_p99": 4.741098101235593,
+   "p2pl_rmse": 1.3230520120888019
+  },
+  "octant_011": {
+   "p2pl_frac_within_0p05": 0.06406582231672367,
+   "p2pl_max": 12.207258428033827,
+   "p2pl_mean": 0.9605753608506973,
+   "p2pl_median": 0.5803286086730598,
+   "p2pl_min": 0.00013291476297150329,
+   "p2pl_n": 10817,
+   "p2pl_p95": 3.144721506833271,
+   "p2pl_p99": 4.281176070583474,
+   "p2pl_rmse": 1.4058125032758364
+  },
+  "octant_100": {
+   "p2pl_frac_within_0p05": 0.05682238686917694,
+   "p2pl_max": 35.64884350804654,
+   "p2pl_mean": 0.9559338847409623,
+   "p2pl_median": 0.6755865484767245,
+   "p2pl_min": 2.538051812727125e-06,
+   "p2pl_n": 121607,
+   "p2pl_p95": 2.7189516660239854,
+   "p2pl_p99": 4.704356482689103,
+   "p2pl_rmse": 1.4390281936571823
+  },
+  "octant_101": {
+   "p2pl_frac_within_0p05": 0.11803781297904957,
+   "p2pl_max": 7.84203870180597,
+   "p2pl_mean": 0.5831287827911098,
+   "p2pl_median": 0.2904894963100928,
+   "p2pl_min": 1.3016905927948352e-05,
+   "p2pl_n": 25441,
+   "p2pl_p95": 2.2283519086463692,
+   "p2pl_p99": 3.7916752061427146,
+   "p2pl_rmse": 0.9678154585782908
+  },
+  "octant_110": {
+   "p2pl_frac_within_0p05": 0.06582165888370024,
+   "p2pl_max": 4.60909642844511,
+   "p2pl_mean": 0.7833175207702259,
+   "p2pl_median": 0.5649955472651308,
+   "p2pl_min": 0.0001729774016125049,
+   "p2pl_n": 13491,
+   "p2pl_p95": 2.3650026996158244,
+   "p2pl_p99": 3.411176398921788,
+   "p2pl_rmse": 1.0846258483435929
+  },
+  "octant_111": {
+   "p2pl_frac_within_0p05": 0.04175453395191902,
+   "p2pl_max": 5.633104279801842,
+   "p2pl_mean": 1.2960111237926069,
+   "p2pl_median": 0.994121550765167,
+   "p2pl_min": 0.00027243061404512436,
+   "p2pl_n": 2371,
+   "p2pl_p95": 3.5842248327787654,
+   "p2pl_p99": 4.7768718344062,
+   "p2pl_rmse": 1.708050399183698
+  },
+  "worst_region": "octant_111",
+  "worst_region_p2pl_p99": 4.7768718344062
+ },
+ "regional_note": "fixed 2x2x2 partition of the ROI bounds; a global RMSE can hide a locally bent region, the per-cell max/p99 cannot",
+ "roi": {
+  "diagnostic_only": true,
+  "frame": "reference_map_frame",
+  "invalid_reason": null,
+  "provenance": {
+   "author": "EvalContract (diagnostic helper)",
+   "derivation": "axis-aligned bounding box of the reference cloud, pad 0.000 m; no estimate and no residual enters this region",
+   "diagnostic_only": true,
+   "frozen_utc": null,
+   "independent_of_error": true,
+   "independent_of_estimate": true,
+   "notes": "DIAGNOSTIC ONLY: not observation-conditioned, cannot carry a PASS. The authoritative pre-defined ROI is BLOCKED pending DatasetQualification.",
+   "reference_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+   "source": "reference map extent only: /home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd"
+  },
+  "roi_id": "diagnostic_ref_aabb",
+  "supplied": true,
+  "valid": true
+ },
+ "run_name": "replay_1_upstream",
+ "sampling": {
+  "denominator_fixed_n": 272529,
+  "est_grid_intentionally_offset_by": "half voxel (degeneracy guard)",
+  "grid_origin_est_effective_m": [
+   0.125,
+   0.125,
+   0.125
+  ],
+  "grid_origin_est_m": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "grid_origin_ref_effective_m": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "grid_origin_ref_m": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "ref_sample_n": 427139,
+  "sampled_over": "the WHOLE estimated map (not a region-cropped subset): region membership is applied afterwards and reported",
+  "sampler": "nearest input point to each occupied grid-cell centre (deterministic; ties -> lowest index)",
+  "seed": 0,
+  "stat_voxel_m": 0.25,
+  "weighting": "none (uniform); no distance/target weighting applied"
+ },
+ "sequence": "mcd_tuhh_night_09",
+ "status": "DIAGNOSTIC_ONLY_ROI",
+ "support": {
+  "definition": "an estimated sample has reference support when its nearest neighbour in the FULL reference cloud is within support_radius",
+  "drifted_note": "drifted-out samples are LARGE RESIDUALS and are kept in the primary metric",
+  "drifted_out_of_support_fraction": 0.43952386718477665,
+  "drifted_out_of_support_n": 119783,
+  "estimate_coverage_of_reference": 0.00816596002706379,
+  "estimate_coverage_of_reference_note": "fraction of the PRE-DECLARED reference members that have an estimate sample within support_radius",
+  "nearest_reference_searched_in": "the FULL reference cloud (a region-cropped search would hide exactly the drifted-out samples)",
+  "no_correspondence_est_fraction": 0.9701646430288153,
+  "no_correspondence_est_n": 264398,
+  "no_reference_locally_definition": "the reference has no data within no_reference_radius_m (= 10 x support radius, floored at 2 voxels): 'the estimate drifted' and 'the reference is absent here' cannot be distinguished -> decisive unknown",
+  "no_reference_locally_fraction": 0.5306407758440386,
+  "no_reference_locally_n": 144615,
+  "no_reference_radius_m": 1.0,
+  "reference_coverage_of_est": 0.029835356971184716,
+  "reference_coverage_of_est_note": "fraction of the FIXED DENOMINATOR with reference support",
+  "supported_n": 8131
+ },
+ "support_radius_m": 0.1,
+ "thin_structure": {
+  "double_wall_definition": "fraction of estimated samples with reference neighbours on BOTH sides of the sample's own tangent plane by >= 0.02 m within 0.5 m: a single surface collapsed between two walls",
+  "double_wall_flag": true,
+  "double_wall_suspect_fraction": 0.08605689669723222,
+  "estimated_normal_degenerate_n": 0,
+  "estimated_plane_thickness": {
+   "max": 1.5704631843180308,
+   "median": 0.14604843083156144,
+   "n": 20000,
+   "p95": 0.27787236844177177,
+   "rmse": 0.1752347024155838
+  },
+  "note": "a 5 cm claim must survive double-wall / thin structures, which a voxel resolution floor cannot resolve",
+  "reference_plane_thickness": {
+   "max": 0.42123737344904155,
+   "median": 0.005118062699211264,
+   "n": 20000,
+   "p95": 0.04297810442789366,
+   "rmse": 0.022487027968407618
+  },
+  "voxel_resolution_note": "stat voxel = 0.250 m; the metric is NOT a resolution floor"
+ },
+ "threshold_m": 0.05,
+ "tool": "map_accuracy_eval.py v2.2.0",
+ "transform_record": null,
+ "unknown_no_reference_max_frac": 0.05,
+ "unknown_states": [
+  {
+   "code": "UNKNOWN_REGIONAL_GAP",
+   "detail": "regional p99 4.777 m in octant_111 exceeds 2.0x the criterion 0.05 m: a locally bent / thin-structure region cannot be averaged away into an overall claim"
+  },
+  {
+   "code": "UNKNOWN_SUPPORT_CLASSIFICATION",
+   "detail": "53.1% of the fixed denominator has no reference cell nearby: 'drifted out' and 'reference absent' cannot be distinguished"
+  }
+ ],
+ "verdict": {
+  "coverage_within_5cm": 0.06452524318512892,
+  "criterion": "est->ref point-to-plane RMSE <= 0.05 m on the frozen support region",
+  "denominator_fixed_n": 272529,
+  "raw_value_m": 1.3217438634872432,
+  "threshold_m": 0.05,
+  "truncated_is_diagnostic_only": true,
+  "truncated_value_m": null,
+  "value_m": 1.3217438634872432
+ },
+ "warnings": []
+}

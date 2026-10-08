@@ -1,0 +1,364 @@
+{
+ "schema": "transform_independent_source/v1",
+ "generated_utc": "2026-09-29T09:08:06Z",
+ "generator": "make_transform_independent_source.py",
+ "matrix": [
+  [
+   0.9606822945502641,
+   -0.27765001159308367,
+   0.0,
+   0.3383743390355676
+  ],
+  [
+   0.27765001159308367,
+   0.9606822945502641,
+   0.0,
+   0.7934122040035057
+  ],
+  [
+   0.0,
+   0.0,
+   1.0,
+   -0.29181000982183947
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "matrix_ref_est": [
+  [
+   0.9606822945502641,
+   -0.27765001159308367,
+   0.0,
+   0.3383743390355676
+  ],
+  [
+   0.27765001159308367,
+   0.9606822945502641,
+   0.0,
+   0.7934122040035057
+  ],
+  [
+   0.0,
+   0.0,
+   1.0,
+   -0.29181000982183947
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "matrix_keys_note": "`matrix` is what gt_time_assoc_eval.py reads for T_target_source; `matrix_ref_est` is the identical matrix under the key that map_accuracy_eval.py / cross_check_map_eval.py --transform-json read; both are emitted from the same value",
+ "source": "time-segmented, gravity-constrained (yaw + translation) rigid fit on the mcd_tuhh_night_09 GT body-trajectory samples of the first 30 s (est side: run odometry in est_map_frame; target side: GT bridged into ref_map_frame by the recorded seed matrices)",
+ "source_artifact": "/home/lee/t21_wp2/datasets/gt/mcd_tuhh_night_09_gt.tum",
+ "source_artifact_sha256": "d591ef94f3b4a114d6b64f4dc3119236b9350e89333579d634deeb213c54bace",
+ "independent_of_evaluation": true,
+ "fit_run_ids": [
+  "mcd_tuhh_night_09"
+ ],
+ "eval_run_ids": [
+  "mcd_tuhh_night_09"
+ ],
+ "fit_region": {
+  "type": "time_window",
+  "t_min_s": 1666286047.672543,
+  "t_max_s": 1666286077.672543,
+  "t_min_rel_s": 0.0,
+  "t_max_rel_s": 30.0,
+  "time_domain": "dataset_epoch_relative",
+  "epoch_abs_s": 1666286047.672543
+ },
+ "eval_region": {
+  "type": "time_window",
+  "t_min_s": 1666286097.672543,
+  "t_max_s": 1666286230.8601966,
+  "t_min_rel_s": 50.0,
+  "t_max_rel_s": 183.18765354156494,
+  "time_domain": "dataset_epoch_relative",
+  "epoch_abs_s": 1666286047.672543
+ },
+ "fit_time_ranges": [
+  [
+   0.0,
+   30.0
+  ]
+ ],
+ "eval_time_ranges": [
+  [
+   50.0,
+   183.2
+  ]
+ ],
+ "time_domain": "dataset_epoch_relative",
+ "frame_from": "est_map_frame",
+ "frame_to": "ref_map_frame",
+ "fit_n_pairs": 301,
+ "fit_rmse_m": 0.6325438749684803,
+ "fit_rmse_identity_m": 4.9860509692584305,
+ "rotation_deg": 16.120000000000022,
+ "rotation_axis_unit": [
+  0.0,
+  0.0,
+  1.0
+ ],
+ "zyx_yaw_deg": 16.119999999999987,
+ "translation_m": [
+  0.3383743390355676,
+  0.7934122040035057,
+  -0.29181000982183947
+ ],
+ "notes": "Time-domain segmentation: fit on [0,30s], evaluate on [50,183.2s]. Spatial overlap possible (robot may revisit same area): measured, only 0.075 of the evaluation samples lie within 1 m / 0.088 within 2 m of a fit sample, so the split is time-disjoint AND largely spatially separated; independence is asserted on the sample/time-index provenance, not on space. Used as independent transform for controlled A/B experiment per Phase B protocol. Gap >=20s ensures temporal independence of fit and eval windows. Fit side: 301 GT body-trajectory samples in the fit region, est side = run odometry expressed in est_map_frame (the estimated map is assembled from these poses; source-side consistency median NN 1.56 m). Target side: GT bridged into ref_map_frame with the recorded seed matrices (verified median NN 1.24e-06 m on the crop support). Estimator: gravity-constrained yaw+translation least squares (both frames are gravity-aligned by construction; the fit region cannot identify the residual tilt). The literal nearest-est-map-point Umeyama prescription was executed and REJECTED: corridor aliasing gives a 13.34 deg rotation about a near-horizontal axis whose objective is flat and which makes the est<->ref map agreement worse (median 1-NN 1.61 -> 2.46 m); unconstrained 6-DOF Umeyama is unidentifiable about the path axis and is worse still (6.84 m). Delivered fit: fit-region RMSE 0.633 m (untransformed pairs 4.986 m), yaw 16.12 deg; fitted yaw is not constant over the run (10.4 deg on [0,15]s, 27.8 deg on [100,140]s), i.e. the estimated map is yaw-distorted relative to the reference and no single rigid transform aligns the whole map - this record is valid for the fit region and its transfer to the evaluation region is reported as a diagnostic only.",
+ "validation": {
+  "gate": "map_accuracy_eval.validate_transform_record",
+  "eval_roi": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation/roi_authoritative_mcd_tuhh_night_09.json",
+  "eval_roi_time_range_s": [
+   50.0,
+   183.2
+  ],
+  "matrix_present": true,
+  "ok": true,
+  "detail": null,
+  "provenance_disjointness": "time-index ranges disjoint in the shared time domain dataset_epoch_relative"
+ },
+ "lever_arm_m": null,
+ "lever_arm_note": "not carried by this record: both sides of the fit are BODY (VN200 IMU) positions, the matrix acts on map/odometry coordinates, so no lidar<->IMU lever arm is absorbed or applied here; a consumer that declares an entity change must supply its own sourced lever arm and NOT re-add one for this matrix",
+ "fit_pairing": {
+  "est_entity": "estimated body trajectory at 10 Hz (traj/lio_odom.tum), est_map_frame",
+  "target_entity": "MCD GT body (VN200 IMU) trajectory, ref_map_frame",
+  "association": "exact time association (GT sample times; est interpolated linearly)",
+  "n_est_samples_available_in_fit_region": 300,
+  "note": "time association, not spatial nearest neighbour: the map-based nearest-neighbour association is executed as a cross-check and is rejected (see cross_checks) because in a corridor it aliases along the corridor axis"
+ },
+ "fit_method": {
+  "estimator": "closed-form yaw scan (0.5 deg then 0.01 deg) with the translation solved by centroid alignment; numpy/SVD, fully deterministic",
+  "rotation_model": "yaw about the frame vertical (z) only",
+  "why_constrained": "ref frame is gravity aligned by the recorded seed R0 = FromTwoVectors(-acc_mean, -z) over the first 20 IMU samples, est frame by the run config gravity_align: true; a non-yaw component of the relative rotation can therefore only be the few-degree difference between the two acc_mean estimates, which a 30 s (~38 m, near straight) window does not identify",
+  "rejected_alternatives": [
+   "nearest-est-map-point Umeyama (literal prescription)",
+   "unconstrained 6-DOF Umeyama on the same trajectory pairs"
+  ],
+  "fit_rmse_identity_m_meaning": "RMSE of the same fit-region pairs with no transform at all (R = I, t = 0)"
+ },
+ "ref_frame_definition": {
+  "frame": "ref_map_frame",
+  "definition": "tuhh_night_09_seeded.pcd frame = R0 @ inv(T_body_survey(gt_t0)) applied to the MCD survey (world) frame",
+  "ref_map": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd",
+  "ref_map_sha256": "103ba9a2c168e0f9be544bdeb76ccdc05d1ecac8e8b6e1cfd6b9559194f9ee9c",
+  "survey_map": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_survey.pcd",
+  "survey_map_sha256": "a8e868c8c9cf8bfa7a141b2cdf1f41ba50967653c16552f918021af6c5c5e6a1",
+  "seed_provenance": "/home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd.provenance.json",
+  "seed_provenance_sha256": "6dd116aaf6d6a3fc7d59dcc663dd847c795b8d3b71743cd9b296b09a3ec1c746",
+  "survey_to_ref_matrix": [
+   [
+    0.7624715647705619,
+    0.6469717119841344,
+    0.008044675789344055,
+    -96.95440253113966
+   ],
+   [
+    -0.6467051618319479,
+    0.7624284938485262,
+    -0.021799665772241367,
+    -64.13687262951808
+   ],
+   [
+    -0.020237257130918243,
+    0.011419091914602816,
+    0.9997299924297404,
+    0.8064037948415705
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ],
+  "bridge_verification": {
+   "identity": "ref_map == bridge @ survey_map  (seed_reference_map.py recipe)",
+   "median_nn_m": 1.237678049790133e-06,
+   "frac_le_1mm": 0.9454062074935081,
+   "note": "the remaining fraction is the surveyed cloud dropped by the seeded crop, not a bridge error"
+  },
+  "gt_frame_note": "the raw GT TUM is in the MCD survey (world) frame; it was bridged into ref_map_frame with the recorded seed matrices before pairing - a consumer comparing against the raw GT TUM must compose this matrix with inv(survey_to_ref_matrix)"
+ },
+ "est_inputs": {
+  "est_map": "/home/lee/t21_wp2/eval/runs/mcd_tuhh_night_09-fork-smoke/map/map.pcd",
+  "est_map_sha256": "f79c5e6e3eec3aa4b25a2ef2aeab083b1a605fb699ae9a23667f384e2f24f22c",
+  "est_traj": "/home/lee/t21_wp2/eval/runs/mcd_tuhh_night_09-fork-smoke/traj/lio_odom.tum",
+  "est_traj_sha256": "10fd85a6310e769937c33623836f2c4ed622b5754cbe7016198f9b6350636de4",
+  "run_dir": "/home/lee/t21_wp2/eval/runs/mcd_tuhh_night_09-fork-smoke",
+  "est_map_vs_est_traj": {
+   "metric": "est_traj -> est_map 1-NN",
+   "median_m": 1.5631296648793602,
+   "p95_m": 1.9210929722607069,
+   "frac_le_0p15_m": 0.0005414185165132648,
+   "frac_le_0p5_m": 0.02165674066053059
+  }
+ },
+ "cross_checks": {
+  "prescribed_map_nn_umeyama": {
+   "method": "each fit-region GT point -> nearest est-map point (<= 2 m), Umeyama",
+   "n_pairs": 301,
+   "max_assoc_distance_m": 2.0,
+   "rotation_deg": 13.339418636766219,
+   "rotation_axis_unit": [
+    0.8421113371484468,
+    0.5374249111140036,
+    0.044977336072297265
+   ],
+   "translation_m": [
+    -0.10617621263503274,
+    0.2560933432339194,
+    0.22649197650535216
+   ],
+   "fit_rmse_m": 1.0029422775726826,
+   "fit_rmse_identity_on_same_pairs_m": 1.116513226159406,
+   "verdict": "REJECTED",
+   "reason": "objective is flat about the fitted (near-horizontal) axis and the result degrades the independent est<->ref map agreement"
+  },
+  "six_dof_umeyama_same_pairs": {
+   "method": "unconstrained 6-DOF Umeyama on the fit-region trajectory pairs",
+   "rotation_deg": 34.31813992466841,
+   "translation_m": [
+    0.43260723602195483,
+    0.6434336492470738,
+    0.21823931547480277
+   ],
+   "verdict": "REJECTED",
+   "reason": "rotation about the path axis is unidentifiable in a 30 s window"
+  }
+ },
+ "transfer_diagnostics": {
+  "eval_region_no_transform": {
+   "rmse_m": 24.89196575454962,
+   "median_m": 25.104420854597414,
+   "p95_m": 34.35570725459307
+  },
+  "eval_region_delivered": {
+   "rmse_m": 12.045618964176757,
+   "median_m": 8.065091866421694,
+   "p95_m": 22.750981816221472
+  },
+  "eval_region_prescribed_map_nn_umeyama": {
+   "rmse_m": 24.042959459022182,
+   "median_m": 24.855034142769583,
+   "p95_m": 33.13646471955833
+  },
+  "eval_region_six_dof_umeyama": {
+   "rmse_m": 17.57171265491436,
+   "median_m": 19.18108258190709,
+   "p95_m": 25.711203197184755
+  },
+  "fit_region_delivered": {
+   "rmse_m": 0.6325438749684803,
+   "median_m": 0.6087725703996316,
+   "p95_m": 0.8326562636678785
+  },
+  "yaw_fitted_per_window_deg": {
+   "[0,15]": 10.45,
+   "[15,30]": 18.37,
+   "[0,30]": 16.12,
+   "[30,60]": 17.8,
+   "[60,100]": 19.2,
+   "[100,140]": 27.76,
+   "[140,183.188]": 29.38
+  },
+  "note": "post-hoc transfer diagnostics over data the fit never saw; they are NOT an accuracy verdict and must not be promoted into one"
+ },
+ "map_agreement_diagnostics": {
+  "note": "whole-map 1-NN agreement of the est map view against the reference map; the delivered fit never saw the reference map - this is validation, not a fit criterion and not an accuracy verdict",
+  "identity": {
+   "metric": "est_map_view -> ref_map 1-NN",
+   "median_m": 1.6123522702396773,
+   "p95_m": 19.07292721061699,
+   "frac_le_0p15_m": 0.04841853641521242,
+   "frac_le_0p5_m": 0.2175320345121213
+  },
+  "delivered": {
+   "metric": "est_map_view -> ref_map 1-NN",
+   "median_m": 0.7706899751555163,
+   "p95_m": 4.286629390912263,
+   "frac_le_0p15_m": 0.09372851969263284,
+   "frac_le_0p5_m": 0.35137422670893476
+  },
+  "prescribed_map_nn_umeyama": {
+   "metric": "est_map_view -> ref_map 1-NN",
+   "median_m": 2.458283050226686,
+   "p95_m": 18.25154779459333,
+   "frac_le_0p15_m": 0.03304504837236978,
+   "frac_le_0p5_m": 0.12668636442912395
+  },
+  "six_dof_umeyama": {
+   "metric": "est_map_view -> ref_map 1-NN",
+   "median_m": 6.83966886472437,
+   "p95_m": 24.5314783690236,
+   "frac_le_0p15_m": 0.03336821478768479,
+   "frac_le_0p5_m": 0.1102202661249782
+  }
+ },
+ "spatial_revisit_risk": {
+  "frac_eval_samples_within_1m_of_fit_region": 0.07507507507507508,
+  "frac_within_2m": 0.08783783783783784,
+  "frac_within_5m": 0.17942942942942944
+ },
+ "frame_composition": {
+  "note": "the delivered matrix targets ref_map_frame (the reference map used by the map metric); the raw GT TUM lives in the MCD survey (world) frame, so a consumer whose target is the raw GT trajectory must use matrix_survey_from_est instead of `matrix`, and declare the survey frame as its target frame",
+  "matrix_survey_from_est": [
+   [
+    0.5529352366932379,
+    -0.8329784375641858,
+    -0.020237257130920134,
+    32.214450295175304
+   ],
+   [
+    0.8332225489340228,
+    0.5528198515680925,
+    0.01141909191460391,
+    112.43783308179302
+   ],
+   [
+    0.001675700141832725,
+    -0.02317615726068,
+    0.9997299924298346,
+    -1.7306869399240552
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ],
+  "relation": "matrix_survey_from_est = inv(ref_frame_definition.survey_to_ref_matrix) @ matrix",
+  "exactness_check": {
+   "fit_region_rmse_against_raw_gt_m": 0.6325438749684895,
+   "fit_region_rmse_against_bridged_gt_m": 0.6325438749684803,
+   "identical": true
+  },
+  "eval_region_rmse_against_raw_gt_m": 12.045618964177033
+ },
+ "independence_evidence": {
+  "fit_time_ranges": [
+   [
+    0.0,
+    30.0
+   ]
+  ],
+  "eval_time_ranges": [
+   [
+    50.0,
+    183.2
+   ]
+  ],
+  "same_time_domain": "dataset_epoch_relative",
+  "gap_s": 20.0,
+  "samples_disjoint": true
+ }
+}

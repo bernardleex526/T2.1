@@ -58,8 +58,10 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
             }
         }
         if (time_datatype != sensor_msgs::msg::PointField::FLOAT32 &&
-            time_datatype != sensor_msgs::msg::PointField::FLOAT64)
-            off_time = -1; // 仅支持浮点时间字段(如 Velodyne time / RoboSense timestamp)
+            time_datatype != sensor_msgs::msg::PointField::FLOAT64 &&
+            time_datatype != sensor_msgs::msg::PointField::UINT32 &&
+            time_datatype != sensor_msgs::msg::PointField::INT32)
+            off_time = -1; // 支持浮点与整型时间字段(如 Velodyne time / RoboSense timestamp)
     }
 
     std::size_t point_step = msg->point_step;
@@ -89,7 +91,13 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
         const uint8_t *p = msg->data.data() + base + off_time;
         if (time_datatype == sensor_msgs::msg::PointField::FLOAT64)
             return (*reinterpret_cast<const double *>(p)) * time_scale;
-        return static_cast<double>((*reinterpret_cast<const float *>(p)) * static_cast<float>(time_scale));
+        if (time_datatype == sensor_msgs::msg::PointField::FLOAT32)
+            return static_cast<double>((*reinterpret_cast<const float *>(p)) * static_cast<float>(time_scale));
+        if (time_datatype == sensor_msgs::msg::PointField::UINT32)
+            return static_cast<double>(*reinterpret_cast<const uint32_t *>(p)) * time_scale;
+        if (time_datatype == sensor_msgs::msg::PointField::INT32)
+            return static_cast<double>(*reinterpret_cast<const int32_t *>(p)) * time_scale;
+        return 0.0;
     };
 
     for (std::size_t i = start; i < point_num; i += stride)

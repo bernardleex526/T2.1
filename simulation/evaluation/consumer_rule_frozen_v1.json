@@ -1,0 +1,31 @@
+{
+  "rule_id": "localizer-audit-tf-consumer-v1",
+  "declaration": "This rule is an audit diagnostic declaration for reproducible coverage calculation. It is NOT the historical real consumer and MUST NOT be used as evidence of actual availability rate.",
+  "tf_query": {
+    "method": "latest_not_later_than_odom_stamp",
+    "max_age_s": 0.1,
+    "failure_handling": "mark_as_unavailable"
+  },
+  "time_association": {
+    "gt_to_est_tolerance_s": 0.05,
+    "method": "nearest_in_tolerance"
+  },
+  "coverage_definition": {
+    "numerator": "union of associated timestamps expanded by fixed windows",
+    "denominator": "complete GT valid support duration (union of valid segments)",
+    "window_per_sample_s": 0.1,
+    "gap_definition": "dt > max(0.5, 2 * median_dt)"
+  },
+  "missing_handling": {
+    "no_tf_available": "count separately, not covered",
+    "tf_too_old": "count separately, not covered",
+    "gt_gap": "exclude gap duration from both numerator and denominator"
+  },
+  "historical_consumer_difference": {
+    "online_consumer": "lookupTransform(map, base_link, TimePointZero) with stamp=now()",
+    "offline_eval_historical": "lookupTransform(map, base_link, odom_stamp) with tf_tol=0.02s",
+    "note": "These two are not equivalent; this audit rule is a third distinct definition declared for reproducibility only"
+  },
+  "frozen_utc": "2026-09-29T08:13:50Z",
+  "author": "A3ConsumerRuleFrozen task"
+}

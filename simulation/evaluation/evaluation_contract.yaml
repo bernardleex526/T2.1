@@ -1,0 +1,394 @@
+# =============================================================================
+# T2.1 evaluation contract (v2) -- corrected metric bookkeeping
+# =============================================================================
+# Owner: EvalContract.  Frozen baseline commit:
+#   04b73f553918b1dcc751feac69c0a2834f194432  (branch main)
+# Artifact root: /home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb
+# Scope: EVALUATION ONLY.  The algorithm, its parameters and the public configs
+# are NOT modified by this contract, and no full replay is consumed by it.
+# The legacy evaluators stay byte-identical (see legacy_evaluators below) and
+# their outputs are neither overwritten nor deleted; this contract defines a
+# SEPARATE result namespace, identified by the evaluator hashes in
+# evaluator_hashes.json.
+# =============================================================================
+schema_version: 2
+protocol_id: t21-eval-contract-v2
+status: FROZEN_FOR_REVIEW
+authoritative_when: "a measurement is published for baseline 04b73f5"
+
+# ------------------------------------------------------------------ legacy ---
+legacy_evaluators:
+  retained_verbatim: true
+  outputs_overwritten: false
+  files:
+    - path: /home/lee/t21_wp2/eval/eval_map.py
+      sha256: 2d3f14dedcae9527f48795d45f70ac224b8b55ca5343f9e3bf4d854f8b5f56ae
+      role: "legacy map accuracy / consistency report (superseded for PASS/FAIL by map_accuracy_eval.py)"
+    - path: /home/lee/t21_wp2/eval/eval_trajectory.py
+      sha256: c096964e6be7682ad0b569c0f70e16b667f657b571680172c9fd24773ed47243
+      role: "legacy trajectory ATE/RPE (untouched; ATE is not the mapping criterion)"
+    - path: /home/lee/t21_wp2/eval/eval_speed.py
+      sha256: 88669110e9aedc0fa023022c2c547f8e1bcb6a2d880133056b3869e5c2de90d9
+      role: "legacy motion-speed / realtime report (untouched)"
+    - path: /home/lee/t21_wp2/eval/common.py
+      sha256: 022ad5dc948e97080920673be1f5cb59a99d73c40593b9fe58d676e50728c014
+    - path: /home/lee/t21_wp2/eval/report.py
+      sha256: ddec0220b18253d40a38b266a786ee9149d6f2a6cfcbf5853adb8c207d2a3a42
+    - path: /home/lee/t21_wp2/eval/tools/metric_audit_gtinterp.py
+      sha256: f37c8db252daa46ebbff9e3e2ae00a11a4ffaa7a9279820de97b3bb0ad7155c8
+      role: "legacy GT-interpolation audit (superseded for coverage bookkeeping by gt_time_assoc_eval.py)"
+
+# ------------------------------------------------------------- primary metric -
+primary_metric:
+  id: map_point_to_plane_rmse
+  name_cn: 测绘参考地图上的点到面 RMSE
+  definition: >-
+    RMSE of |d . n| over the FIXED evaluation set, where d is the vector from an
+    estimated-map sample to its nearest reference-map sample and n is the
+    reference normal at that sample.  Residuals are NOT distance-weighted.
+  threshold_m: 0.05
+  operator: "<="
+  is_ate: false
+  is_cloud_to_cloud: false
+  directions: "est -> ref only.  ref -> est point-to-point is an auxiliary column."
+  fixed_denominator:
+    definition: >-
+      the estimated-map samples selected on the frozen grid inside the frozen
+      support region, selected BEFORE any truncation, exclusion or outlier
+      removal
+    frozen_before_truncation: true
+    reported_as: sampling.denominator_fixed_n
+    min_points: 1000
+    may_change_between_runs_only_if: "the estimated map or the frozen ROI changes; both are hashed"
+  truncation:
+    default: none
+    rule: >-
+      the headline value is the RAW rmse.  A truncated value may be reported as
+      a diagnostic bracket only, and then ALL of {raw value, excluded count,
+      excluded fraction, fixed denominator} MUST be reported next to it.
+    forbidden: "deleting large residuals to lower the RMSE and calling that an improvement"
+  evaluator: evaluation/map_accuracy_eval.py
+  independent_cross_check: evaluation/cross_check_map_eval.py
+
+# ------------------------------------------------------------- auxiliaries ---
+auxiliary_metrics:
+  no_new_pass_thresholds: true
+  rationale: >-
+    the contract fixes ONE criterion (the primary one).  Auxiliary numbers are
+    reported for diagnosis; inventing pass lines for them (5 cm ratio, median,
+    coverage, association rate, ...) is forbidden.
+  reported:
+    - est_to_ref_point_to_point: "NN distance stats (rmse/mean/median/p95/p99/max/min)"
+    - ref_to_est_point_to_point: "reverse-direction NN stats (asymmetry)"
+    - point_to_plane_quantiles: "median / p95 / p99 / max, and frac<=2cm, frac<=5cm"
+    - signed_plane_residual: "mean / median (sign convention documented, metric uses |.|)"
+    - reference_coverage_of_est: "fraction of est samples with reference support"
+    - estimate_coverage_of_reference: "fraction of ref samples with an est neighbour"
+    - no_correspondence_fraction: "est samples with no reference sample within support radius"
+    - regional_breakdown: "fixed 2x2x2 ROI octants: n / rmse / p95 / p99 / max / frac<=5cm"
+    - normal_direction_breakdown: "per dominant reference-normal axis (x/y/z)"
+    - thin_structure: "reference & estimate plane-fit thickness, double-wall suspect fraction"
+    - association_and_coverage: "see time_and_association"
+  external_legacy_metrics:
+    - bidirectional C2C (eval_map.py est_to_ref/ref_to_est point_to_point) -- retained, unchanged
+    - trajectory ATE/RPE/loop (eval_trajectory.py) -- retained, unchanged, NOT the mapping criterion
+
+# --------------------------------------------------------- support / ROI ------
+support_domain:
+  requirement: >-
+    the common static support region MUST be pre-defined from REFERENCE coverage
+    and observation conditions, never from the estimated map bounding box and
+    never by filtering on this run's residuals
+  schema: evaluation/roi_schema.json
+  provenance_required:
+    - independent_of_estimate: true
+    - independent_of_error: true
+  enforcement: >-
+    map_accuracy_eval.py refuses to run without a valid ROI
+    (status BLOCKED_PREDEFINED_ROI_MISSING / BLOCKED_ROI_UNSOURCED) and never
+    falls back to an estimate-derived region.  A ROI that cannot be derived from
+    the historical inputs is a BLOCKER, not something to be improvised.
+  unknown_states:
+    no_reference_in_region:
+      status: NOT_MEASURABLE_NO_REFERENCE_IN_SUPPORT
+      meaning: "the reference has no points in the support region: nothing can be evaluated"
+    drifted_out_of_support:
+      counted_as: support.drifted_out_of_support_est_n
+      meaning: >-
+        the reference does exist nearby but the estimate is further from it than
+        support_radius; these are LARGE RESIDUALS and stay in the primary metric
+      forbidden: "re-labelling them as 'no support' to drop them"
+    frames_unaligned:
+      status: BLOCKED_FRAMES_UNALIGNED_NO_SOURCED_TRANSFORM
+      meaning: "essentially zero overlap with no sourced transform: a frame/registration problem"
+    fitted_registration:
+      status: NOT_PASSABLE_REGISTRATION_FITTED_ON_EVAL_DATA
+      meaning: "ICP moved the estimate; a registration fitted on the eval data cannot certify accuracy"
+    transform_fit_on_eval:
+      status: NOT_PASSABLE_TRANSFORM_FITTED_ON_EVAL_DATA
+      meaning: "the supplied transform's fit_region equals the eval_region"
+
+# --------------------------------------------------------- no-PASS conditions -
+cannot_pass:
+  empty_overlap: true
+  very_low_coverage: {coverage_floor_default: 0.30, applies_to: [reference_coverage_of_est, estimate_coverage_of_reference]}
+  registration_failure: true
+  registration_fitted_on_eval_data: true
+  transform_fitted_on_eval_data: true
+  denominator_below_minimum: true
+  sampling_degeneracy:
+    hard_block_fraction: 0.99
+    warn_fraction: 0.05
+    meaning: >-
+      an exact-coincidence fraction > 0.99 means the two sample sets are the same
+      set (a copied cloud / a collapsed grid), which is not a measurement
+  unknown_coverage_sufficiency: >-
+    if coverage sufficiency is unknown (no pre-defined ROI, ROI provenance
+    missing) the tool reports BLOCKED and does not claim an overall verdict
+  outside_region_points_unattributed:
+    status: BLOCKED_UNATTRIBUTED_OUTSIDE_REGION_POINTS
+    record_schema: outside_attribution/v2
+    member_region_schema: member_region/v1
+    meaning: >-
+      sampled estimate points outside the frozen support region may be excluded
+      from "unmeasurable" only when they are MEMBERS of an independently
+      pre-declared set.  The membership is MEASURED by the evaluator against the
+      geometry the --outside-attribution record itself declares (include-box
+      union MINUS exclude-box union) IN THE EVALUATION FRAME: member_region.frame
+      MUST be present and MUST equal the frozen ROI's frame, otherwise nothing is
+      attributed (the same numeric bounds in another frame are a different
+      region).  The evaluator applies no frame conversion -- a rigid re-boxing of
+      a declared AABB would inflate it and over-attribute -- so any sourced
+      conversion must be applied upstream and the boxes declared already in the
+      evaluation frame.  The record's source/artifact/independence flags alone
+      attribute NOTHING, and a record whose geometry is absent, mis-framed,
+      non-independent or unusable attributes nothing.  Any outside point the
+      declared geometry does not cover stays an UNKNOWN RESIDUAL and blocks an
+      overall PASS (fail-closed).  There is NO tolerance fraction and NO bound
+      tuned to the estimate's own point count.  The raw value and the exclusion
+      counts are still reported as diagnostics.
+    roi_supersession: >-
+      an ROI artifact carrying invalid=true (e.g. a frame-inconsistent region
+      superseded by a corrected one) is REFUSED (BLOCKED_ROI_UNSOURCED), so a
+      known-broken region can never be scored
+
+# ------------------------------------------------- sampling / normals / etc ---
+sampling:
+  deterministic: true
+  sampler: >-
+    for every occupied cell of the frozen grid, keep the single input point
+    closest to the cell centre (ties -> lowest index)
+  stat_voxel_m_default: 0.05
+  grid_origin_default_m: [0.0, 0.0, 0.0]
+  est_grid_offset: >-
+    the estimated cloud is sampled on a grid displaced by HALF a voxel from the
+    reference grid; sampling both clouds on one grid lets a voxel collapse a real
+    residual to ~0 and inflates any "within X cm" fraction
+  seed_default: 0
+  must_be_recorded:
+    - stat_voxel_m
+    - grid_origin_est_m
+    - grid_origin_ref_m
+    - seed
+  resolution_separation: >-
+    algorithm map resolution, export resolution and evaluation sampling
+    resolution are THREE different numbers and are recorded separately.  The
+    evaluation voxel is NOT an accuracy floor.
+normals:
+  source: reference map only
+  estimator: "PCA over k nearest reference points within a fixed radius"
+  k_default: 15
+  radius_m_default: 0.15
+  orientation: "canonicalised (largest-|component| positive); the metric uses |d.n|"
+  orientation_sensitivity: none
+weights:
+  applied: none
+  note: "uniform weighting; any distance target weighting would have to be declared and hashed"
+
+# ---------------------------------------------------------------- transform --
+frames:
+  T_target_source:
+    meaning: >-
+      the rigid transform that maps the source (sensor/body) frame into the
+      target (reference map) frame used for the comparison
+    must_record: [matrix, source, frame_from, frame_to, fit_region, eval_region, lever_arm_m]
+    matrix_source_required: true
+    fit_region_vs_eval_region: >-
+      the fit region and the evaluation region MUST be recorded; if they are the
+      same the transform was fitted on the evaluation data and the result is
+      NOT passable
+  sensor_entity:
+    meaning: "which physical sensor body the trajectory/map is expressed in (e.g. Livox Mid-70 body, VN200 IMU body, PandarXT-32)"
+    must_record: [sensor_entity, lever_arm_m]
+    note: >-
+      a lever arm between an IMU-frame trajectory and a lidar-frame map is a
+      systematic offset and must be declared, not silently absorbed
+alignment_policy:
+  allowed: [identity, sourced_rigid_SE3]
+  forbidden: [scale, similarity/sim3, non_rigid, per_block, per_patch, per_chunk, piecewise]
+  enforcement: >-
+    assert_se3() rejects anything whose rotation block is not orthonormal with
+    det = +1 and scale = 1; assert_not_per_block() rejects any record carrying
+    per-block/per-patch/piecewise transforms.  Coordinate-frame conversion is a
+    rigid operation and is NOT the same as SE(3) fitting or local deformation.
+transform_admissibility:
+  requirement: >-
+    a supplied SE(3) is admissible ONLY with an independent source record; a free
+    text `source` string is not evidence
+  record_fields:
+    - source                     # what produced the matrix
+    - source_artifact | source_artifact_sha256   # the artifact itself (one is REQUIRED)
+    - independent_of_evaluation  # MUST be true; a transform fitted on the eval data is not admissible
+    - frame_from, frame_to
+    - fit_region                 # where it was fitted: a box [min,max] or a region id
+    - eval_region                # where it is applied
+  independence_rule:
+    criterion: >-
+      INDEPENDENCE IS A PROPERTY OF THE FIT SAMPLES, NOT OF SPACE.  The record
+      must establish, from run ids / time-index ranges / an explicit sample
+      declaration, that the transform was NOT fitted on the evaluation samples.
+      Two transforms over spatially overlapping regions are perfectly admissible
+      when the runs are different (re-visiting a scene with an independently
+      calibrated sensor is normal); two spatially disjoint boxes fitted on the
+      same run are NOT.
+    fields: [fit_run_ids, eval_run_ids, fit_time_ranges, eval_time_ranges, sample_disjoint]
+    states:
+      overlapping: "shared run id or overlapping time-index range -> NOT_PASSABLE_TRANSFORM_NOT_INDEPENDENT"
+      unknown: "no run / time-index / sample provenance -> cannot establish independence -> NOT_PASSABLE_TRANSFORM_NOT_INDEPENDENT"
+      disjoint: admissible
+    spatial_regions:
+      recorded: [fit_region, eval_region]
+      overlap_handling: >-
+        spatial overlap is RECORDED and warned about (spatial_overlap_is_not_a_leakage_judgement)
+        but is never the deciding criterion
+  on_violation: NOT_PASSABLE_TRANSFORM_NOT_INDEPENDENT
+  missing_fields: same as on_violation (never silently accepted)
+frame_chain_requirement:
+  must_declare: [source_frame, target_frame, sensor_entity, gt_entity]
+  rules:
+    - "source_frame != target_frame        -> T_target_source is REQUIRED"
+    - "sensor_entity != gt_entity          -> lever_arm_m is REQUIRED"
+    - "the SE(3) is applied to the estimate positions; the lever arm is applied in the SOURCE frame"
+    - "an undeclared chain -> BLOCKED_FRAME_CHAIN_UNDECLARED"
+    - "a missing but required chain element -> BLOCKED_MISSING_FRAME_CHAIN"
+    - "the same comparison WITHOUT the chain must be reported as `raw_unaligned` and is never an
+       accuracy number"
+  unaligned_numbers_must_be_labelled: raw_unaligned
+icp:
+  default: off
+  modes: [off, conditional]
+  conditional_diagnostic_only: true
+  rule: >-
+    a full-map ICP may be run ONLY as a conditional diagnostic.  If it moves the
+    estimate, the resulting registration is fitted on the evaluation data, so
+    `pass` is forced to null and the status becomes
+    NOT_PASSABLE_REGISTRATION_FITTED_ON_EVAL_DATA.  ICP must never be the step
+    that turns a failing frame alignment into a PASS.
+  must_record: [type, voxel_sizes_m, max_correspondence_distances_m, max_iteration, stages, translation_m, rotation_deg, identity_sufficient]
+
+# ------------------------------------------------------ time and association --
+time_and_association:
+  evaluator: evaluation/gt_time_assoc_eval.py
+  time_source_required: true
+  time_source_record: {offset_s: "seconds ADDED to the GT stamps", source: "string", method: "one of publish_semantics|declared|clock_domain|hardware_sync", gt_derived: "bool"}
+  forbidden: "fitting a time offset to the GT and then reusing it for an accuracy claim"
+  gt_derived_offset:
+    allowed_as: diagnostic_only
+    effect: "usable_for_accuracy = false"
+  tf_consumer_rule:
+    requirement: >-
+      WHERE the comparison consumes a TF chain, the consumer rule (zero-order
+      hold validity, association tolerance, gap limit) MUST be fixed BEFORE
+      measuring and recorded; it may not be chosen after seeing the numbers.
+    fields:
+      - hold_validity_s      # max age of a held TF sample that is still accepted
+      - assoc_tolerance_s    # max |t_query - t_tf| for an association
+      - gap_limit_s          # widest gap across which nothing is bridged
+      - tf_tolerance_s       # stamp tolerance inside one TF/odometry message
+    unsupplied: BLOCKED (no interval union, no imputation of samples)
+    interval_union: "coverage is the measure in SECONDS of the union of accepted intervals"
+  coverage_tolerance_s:
+    default: "0.5 * gt_nominal_period_s (pre-declared, NOT adapted to the estimate)"
+    source_recorded: true
+  evaluation_window:
+    primary_denominator: >-
+      the FULL effective GT support union: [gt_t0, gt_t1] in the offset-corrected
+      domain.  Using the intersection with the estimate would let a truncated
+      estimate cover 100 % of a shrunken window.
+    secondary_column: "the common interval [max(gt_t0,est_t0), min(gt_t1,est_t1)] and its coverage are reported ADDITIONALLY, never as the headline"
+    denominator_role: "the full-window duration in seconds is the coverage denominator"
+  interpolation:
+    rule: gap-limited linear interpolation of GT position + SLERP of orientation
+    max_gap_s_default: 0.20
+    no_extrapolation: true
+    no_spline_across_holes: true
+  reported_columns:
+    association_rate_est: "fraction of ESTIMATE stamps that received a GT value"
+    gt_time_covered_fraction: "seconds-based union coverage over the evaluation window"
+    gt_time_covered_s: "absolute covered seconds"
+    gt_samples_covered_fraction: "SAMPLE ratio -- reference only, explicitly NOT time coverage"
+    separateness_rule: "100% association is NOT full coverage; the numbers are never merged"
+    also: [est_stamps_outside_gt_span, rejected_because_bracket_gap_gt_max_gap_n, est_segments_without_gt, bracket_span_stats_s, ate_against_interpolated_gt_m, ate_raw_unaligned_m]
+  no_new_aux_thresholds: true
+  measurability_floors_only:
+    min_association_rate: 0.50
+    min_gt_time_coverage: 0.50
+
+# --------------------------------------------------------------- unknown -----
+unknown_states:
+  definition: >-
+    a condition the evaluator cannot resolve into either a PASS-capable
+    measurement or a plain failure.  It is recorded in `unknown_states` and it
+    forces `usable_for_accuracy = false` / `pass = null` where it is decisive.
+  examples:
+    - "no pre-defined ROI (BLOCKED)"
+    - "ROI provenance asserts dependence on the estimate or on the residuals"
+    - "time source missing / GT-derived"
+    - "frames unaligned with no sourced transform"
+    - "exact-coincidence fraction above the warning level"
+    - "regional p99 above twice the criterion while the global RMSE is inside it"
+    - "transform fit_region == eval_region"
+
+# ------------------------------------------------------------- validation -----
+validation_cases:
+  synthetic_module: evaluation/synthetic_cases.py
+  tests:
+    - evaluation/test_map_accuracy_eval.py
+    - evaluation/test_gt_time_assoc_eval.py
+    - evaluation/test_cross_check_parity.py
+  cases:
+    - normal_offset            # magnitude of the main metric in closed form
+    - tangential_offset        # p2pl blind by construction, p2p sensitive
+    - se3                      # recovered only with a sourced transform
+    - local_bump               # global RMSE hides it, regional p99/max do not
+    - double_wall              # thin structure / collapsed surface detection
+    - local_overlap            # cannot PASS
+    - empty_overlap            # cannot PASS
+    - registration_failure     # cannot PASS, with and without conditional ICP
+    - missing_roi / unsourced_roi
+    - time_offset_sourced / time_offset_missing / time_gt_gap / time_est_hole / time_gt_derived_offset
+  rule: "the WHOLE test modules are run, never a hand-picked single case"
+  cross_check_rule: "the independent implementation cross-verifies but never replaces the main metric"
+
+# --------------------------------------------------------------- reporting ----
+reporting:
+  result_namespace: /home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation/results
+  legacy_outputs_untouched: true
+  required_fields_in_every_result:
+    - protocol
+    - tool
+    - inputs (with sha256 of est map, ref map, roi, gt, time source)
+    - sampling (voxel, both grid origins, seed, denominator)
+    - normals (k, radius, orientation policy)
+    - transform_record (matrix, source, fit_region, eval_region)
+    - status
+    - pass (bool or null)
+    - primary_metric (value, threshold, denominator)
+    - brackets (raw + truncated + excluded)
+    - unknown_states
+    - blockers
+  forbidden_phrasings:
+    - "claiming a mapping-accuracy PASS from an ATE number"
+    - "claiming a PASS from a consistency-only (no reference) measurement"
+    - "quoting a truncated RMSE without the raw value and the exclusion rate"
+    - "quoting an auxiliary metric as a pass criterion"

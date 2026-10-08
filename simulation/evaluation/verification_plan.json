@@ -1,0 +1,88 @@
+{
+  "schema": "verification_plan/v1",
+  "owner": "EvalContract",
+  "baseline_commit": "04b73f553918b1dcc751feac69c0a2834f194432",
+  "artifact_root": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb",
+  "eval_dir": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation",
+  "formal_status": "NOT_RUN",
+  "authorization_required_from": "coordinator (Main / VerificationExecutor)",
+  "full_replays_consumed_by_this_plan": 0,
+  "scope_note": "Evaluation tooling only. No algorithm, config, front-end or replay is touched. Every command below is offline: synthetic fixtures, or recomputation over EXISTING artifacts.",
+  "dependencies": {
+    "python3": "3.10+",
+    "numpy": ">=1.20 (1.26.4 present)",
+    "scipy": ">=1.8 (1.8.0 present)",
+    "pytest": ">=7 (9.0.3 present)",
+    "open3d": "0.19.0 present; needed ONLY for binary_compressed PCD input and the optional --icp conditional diagnostic; the metric itself is pure numpy/scipy",
+    "network": "none",
+    "hrdwr": "none"
+  },
+  "steps": [
+    {
+      "id": "V1",
+      "name": "full synthetic + protocol + parity modules",
+      "cwd": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation",
+      "command": "python3 -m pytest -q .",
+      "expected": "58 passed, 0 failed (3 modules: test_map_accuracy_eval.py 34, test_gt_time_assoc_eval.py 12, test_cross_check_parity.py 12); ~100 s wall. HISTORIC: the pre-2026-09-30 revisions of these modules collected 49/50/54 tests; the counts changed because the R38 regression cases were added (and because the test modules had drifted from the stale manifest). See evaluator_hashes.json -> historic_recorded_hashes for the hashes the historic verification ran against.",
+      "covers": [
+        "R01 raw-value headline + truncation cannot promote a PASS",
+        "R02 whole-map membership, full-cloud support search, drifted-out vs no-reference",
+        "R03 transform admissibility by sample/run/time-index provenance (spatially overlapping independent runs ACCEPTED, same-run fitting REJECTED, missing provenance REJECTED)",
+        "R06 3-D coincidence definition (tangential slip is not flagged)",
+        "R07 decisive unknowns block a PASS",
+        "R38 (2026-09-30) outside-region points are attributed ONLY by MEASURED member geometry (fail-closed); a declarative-only record attributes nothing; PARTIAL declared coverage cannot buy a PASS and the residual is reported; a ROI marked invalid is refused",
+        "R04/R05 time tolerance, union-of-intervals coverage, full-window denominator, declared frame chain applied or BLOCKED",
+        "R12 strict (same estimand, independent arithmetic) vs sensitivity mode, measured tolerance",
+        "known-contract cases PASS (2 cm normal offset, tangential slip, SE3 with sourced transform) and FAIL correctly (6 cm normal offset, sparse blunder)"
+      ],
+      "failure_means": "the submitted tool does not implement the contract as documented; do NOT proceed to the offline recompute",
+      "mid_flight_rule": "run the WHOLE modules, never a hand-picked single case"
+    },
+    {
+      "id": "V2",
+      "name": "offline recompute over the EXISTING diagnosis artifacts (no replay)",
+      "cwd": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation",
+      "command": "bash recompute_commands.sh",
+      "expected": "two JSONs in evaluation/results/: replay_1_upstream and replay_2_fork. Both must be status=DIAGNOSTIC_ONLY_ROI with pass=null (the ROI available today is diagnostic-only) and diagnostic_would_be_status reflecting a frame/coverage problem, NOT an accuracy verdict. Runtime ~2-4 min total at --stat-voxel 0.25.",
+      "covers": [
+        "the legacy eval_map.py 'accuracy_measurable=true' verdict is not reproducible under the corrected contract",
+        "frame misalignment is visible as near-zero support coverage, which the legacy report never recorded"
+      ],
+      "not_covered": "no accuracy PASS/FAIL may be produced for the baseline: the pre-defined ROI and the sourced coordinate chain are still missing (see blockers)"
+    },
+    {
+      "id": "V3",
+      "name": "strict cross-check on a real artifact pair",
+      "cwd": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation",
+      "command": "python3 cross_check_map_eval.py --mode strict --est-map /home/lee/t21_wp2/fork/artifacts/04b73f5_diagnosis_20260929_JWUGeL/replay_2_fork/map/map.pcd --ref-map /home/lee/t21_wp2/datasets/gt/mcd/tuhh_night_09_seeded.pcd --roi results/roi_diagnostic_mcd_tuhh_night_09.json --main-result results/replay_2_fork_map_accuracy_v2.json --stat-voxel 0.25 --out results/replay_2_fork_cross_check_strict.json",
+      "expected": "status=MEASURED on the SAME denominator as the main result; comparison.agrees reported against a MEASURED tolerance (3 x across-fold SE). Runtime ~2 min.",
+      "covers": ["arithmetic independence of the main implementation on real data"]
+    },
+    {
+      "id": "V4",
+      "name": "CLI smoke of both tools on synthetic files",
+      "cwd": "/home/lee/t21_wp2/fork/artifacts/04b73f5_evidence_audit_20260929_5V6fKb/evaluation",
+      "command": "python3 -m pytest -q test_map_accuracy_eval.py::test_cli_end_to_end_and_roi_file_io test_gt_time_assoc_eval.py::test_cli_end_to_end",
+      "expected": "2 passed",
+      "covers": ["PCD/TUM/JSON I/O, hashing, exit codes"]
+    }
+  ],
+  "must_not_run": [
+    "any online front-end, bag playback, short test or full replay (budget 0)",
+    "any build / lint / project-wide test suite",
+    "any modification of the legacy evaluators or of the algorithm/config"
+  ],
+  "determinism": {
+    "seeds": "every sampler and jitter is seeded; results are bit-reproducible for a fixed voxel/origin/seed",
+    "recorded_in_every_result": ["stat_voxel_m", "grid_origin_est_m", "grid_origin_ref_m", "seed",
+                                 "normal_k", "normal_radius", "support_radius_m", "input sha256s",
+                                 "membership_hash"],
+    "known_nondeterminism": "cKDTree workers=-1 is thread-parallel; the reduction is exact per query (nearest neighbour) so results are stable, but per-fold values can differ in the last ulp on different core counts"
+  },
+  "blockers_that_no_verification_can_remove": [
+    "no pre-defined, observation-conditioned support ROI exists in the historical inputs -> the main metric is BLOCKED (NOT_MEASURABLE / BLOCKED_PREDEFINED_ROI_MISSING); owner: DatasetQualification",
+    "no independent-source coordinate chain (source->target transform + lever arm provenance) exists for the baseline -> BLOCKED; the legacy reference-frame relation is itself under revision (EvidenceAudit frame_consistency v2)",
+    "no TF-consumer rule (hold validity / association tolerance / gap limit) was recorded for the historical runs -> the online availability rate is BLOCKED"
+  ],
+  "acceptance_of_this_plan": "the plan is satisfied when V1 is green, V2/V3/V4 reproduce the expected statuses, and NO accuracy PASS/FAIL is emitted for the baseline while the blockers above stand"
+}
