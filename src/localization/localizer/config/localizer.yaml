@@ -2,8 +2,10 @@ cloud_topic: /mapping/body_cloud
 odom_topic: /mapping/lio_odom
 map_frame: map
 local_frame: odom
-# 2.0 Hz is the rate the verified TIERS relocalization runs used.
-update_hz: 2.0
+# One correction per lidar scan.  2.0 Hz (the old value) left the T2.1 Gazebo regression with 2%
+# output availability while moving and up to 10 s gaps: robot_pose predicts at most 0.12 s past
+# the last odometry and validity_timeout_s is 1.0 s, so a 0.5 s correction period starves both.
+update_hz: 10.0
 
 # Path of the prior PCD map the localizer relocalizes against.
 # Resolution order: the -p pcd_path:=<file> launch/CLI parameter wins; otherwise this key.
@@ -36,9 +38,14 @@ refine_map_resolution: 0.1
 # already uses 8.  Revert to 15 if deployment margin is preferred over rate; both values are
 # inside the verified range and no gate threshold depends on the iteration count.
 refine_max_iteration: 8
-refine_score_thresh: 0.02
+refine_score_thresh: 0.01
 refine_max_corr_dist: 0.15
-refine_min_inlier_ratio: 0.2
+# Measured on 131 Gazebo scans against the frozen prior (fitness_probe): at the TRUE pose the
+# inlier ratio within 0.15 m is >= 0.996 (p1); a lock 0.5 m or 3 deg off scores 0.59-0.76 and the
+# mean squared distance barely moves (0.0015 -> 0.0022 m^2).  The ratio is the discriminating
+# signal: 0.85 rejects every wrong-pose sample and leaves margin for dynamic objects / map change.
+# 0.2 (the old value) accepted all of them.
+refine_min_inlier_ratio: 0.85
 
 # Physical-consistency gate of the accepted map<-odom updates (see
 # src/localizers/outlier_gate.h): the body-pose innovation of a new candidate against the

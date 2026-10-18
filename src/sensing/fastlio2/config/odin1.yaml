@@ -1,36 +1,51 @@
 # ============================================================================
-# odin1.yaml - Deployment profile for RoboSense Odin1 on Quadruped platform
+# odin1.yaml - Odin1 LiDAR on the quadruped, Orin NX
 # ============================================================================
+# STATUS: NOT READY until the three MEASURE-ON-ROBOT items below are filled in.
+#   python3 tools/preflight_config.py --config src/sensing/fastlio2/config/airy.yaml
+# refuses this file as shipped (exit 2) - on purpose.  Nothing here was measured on the target
+# robot; an earlier revision carried a MID360 extrinsic, a nanosecond time scale on a seconds field
+# and an unsourced 18.5/37 Hz gait notch, which made the map 3x worse (4.2 cm RMSE) or crashed.
+#
+# Values that ARE justified (Gazebo T2.1 regression, 96-line 360-deg lidar at ~310k pts/s, quadruped
+# body motion +-5 deg pitch, 0.5-1.0 m/s): with the true extrinsic this file gives map RMSE
+# 1.2-1.8 cm, p95 <= 4.0 cm, odometry ATE <= 2.8 cm.  The Gazebo lidar renders a scan instantly,
+# so in-scan de-skew is NOT exercised there.
+# Flat schema read by lio_node.cpp loadParameters().
+# ============================================================================
+# Odin1's driver, topic and per-point time layout are NOT confirmed in this repository: the topic
+# and time field below assume a RoboSense-compatible XYZIRT PointCloud2 and MUST be checked with
+# tools/rslidar_pcl2_probe.py before the first run.
 imu_topic: /imu/data
 lidar_topic: /rslidar_points
-body_frame: body
+body_frame: body            # = the IMU frame; the URDF root (quadruped_description) hangs base_link off it
 world_frame: odom
 print_time_cost: false
 
 # --- front-end input / preprocess ---
 lidar_type: pointcloud2
-lidar_max_line: 4
 lidar_filter_num: 2
-lidar_min_range: 0.4
-lidar_max_range: 50.0
-
-# RoboSense Odin1 per-point time field (XYZIRT layout)
+lidar_min_range: 0.4        # also drops returns from the robot's own legs; set from the measured self-occlusion
+lidar_max_range: 60.0
+# Assumed XYZIRT `timestamp` in FLOAT64 seconds (scale 1.0); the probe tool reports the real
+# field name and scale - paste those.
 pcl2_time_field: "timestamp"
-pcl2_time_scale: 1.0e-9
-imu_acc_scale: 1.0
+pcl2_time_scale: 1.0
+imu_acc_scale: 1.0          # verify: static mean |a| ~ 9.81 m/s^2 (tools/odom_static_drift.py)
 
-# --- high-precision mapping voxels for <= 5cm accuracy target ---
-scan_resolution: 0.05
-map_resolution: 0.05
+# --- mapping / IESKF ---
+# 0.15 m scan voxel keeps ~6k points per scan (Orin NX real-time margin); 0.15 m map voxel was
+# measured at 1.2-1.8 cm map RMSE in the Gazebo regression.  Do not go below 0.1 m on Orin NX
+# without measuring the per-scan time (print_time_cost: true, must stay < 100 ms).
+scan_resolution: 0.15
+map_resolution: 0.15
 cube_len: 500.0
 det_range: 60.0
 move_thresh: 1.5
 
-# --- noise parameters (Allan variance calibrated) ---
-na: 0.1
-ng: 0.02
-nba: 0.0001
-nbg: 0.00001
+# --- MEASURE ON ROBOT (1/3): IMU noise, from a >=2 h static recording ---
+#   python3 tools/imu_allan_variance.py --bag imu_static --topic /imu/data --emit-yaml
+# na: <m/s^2/sqrt(Hz)>   ng: <rad/s/sqrt(Hz)>   nba: <..>   nbg: <..>
 
 # --- IMU initialization (static window) ---
 imu_init_num: 40
@@ -38,6 +53,7 @@ imu_init_window_s: 3.0
 imu_init_static_gyro_std: 0.005
 imu_init_static_acc_dev: 0.3
 imu_init_max_wait_s: 5.0
+imu_lpf_enable: false       # see commons.h: the accel-only LPF delays accel vs gyro
 
 near_search_num: 5
 ieskf_max_iter: 5
@@ -45,19 +61,15 @@ gravity_align: true
 esti_il: false
 point_quality_thresh: 0.9
 
-# --- extrinsic LiDAR to IMU [x y z qx qy qz qw] ---
-ext_il: [-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0, 1.0]
+# --- MEASURE ON ROBOT (2/3): LiDAR -> IMU extrinsic [x y z qx qy qz qw], p_imu = R*p_lidar + t ---
+# Must equal T_imu<-lidar implied by the imu_* / lidar_* mount args of quadruped_description.
+# ext_il: [<x>, <y>, <z>, <qx>, <qy>, <qz>, <qw>]
 
 lidar_cov_inv: 1000.0
 
-# --- quadruped gait motion compensation ---
-gait_filter_enable: true
-gait_notch_freq_hz: [18.5, 37.0]
-gait_notch_q: 12.0
+# --- MEASURE ON ROBOT (3/3, optional): gait notch ---
+# Gait pitch/roll is REAL body rotation the lidar undergoes; do not notch it out.  Only notch a
+# measured STRUCTURAL resonance (tools/imu_gait_spectrum.py on a walking recording), and keep the
+# gyro and accel masks equal so both triples get the same group delay.
+gait_filter_enable: false
 gait_filter_sample_rate_hz: 200.0
-gait_filter_gyro_x: true
-gait_filter_gyro_y: true
-gait_filter_gyro_z: false
-gait_filter_accel_x: true
-gait_filter_accel_y: true
-gait_filter_accel_z: false

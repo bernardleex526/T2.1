@@ -113,9 +113,12 @@ struct Config
     bool gait_filter_accel_x = false;
     bool gait_filter_accel_y = false;
     bool gait_filter_accel_z = false;
-    // --- 加速度计 Butterworth 低通滤波与触地冲击饱和保护 ---
-    bool imu_lpf_enable = true;
+    // --- IMU Butterworth 低通滤波与触地冲击饱和保护 ---
+    // 默认关闭：低通对加速度计与陀螺施加同一组系数(群延迟相同、二者时序不变)，但相对 LiDAR 仍有
+    // 数 ms 延迟；只有在实测到高于 fc 的结构振动/混叠时才打开。
+    bool imu_lpf_enable = false;
     double imu_lpf_cutoff_hz = 40.0;           // 截止频率 30-50 Hz
+    double imu_lpf_sample_rate_hz = 200.0;     // 必须等于实际 IMU 频率(ros2 topic hz /imu/data)
     bool imu_saturation_detect = true;
     double imu_saturation_limit_mps2 = 152.0;  // 比力模长阈值 (约 15.5g)
 };

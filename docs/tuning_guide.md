@@ -272,6 +272,30 @@ python3 simulation/scripts/test_t3_localization.py --run-dir /tmp/sim_loc --ref-
 两者的差额来自 IMU 初始化 + 首次锁定，是**启动段固有代价**，不是定位器精度问题。
 引用可用率时必须写清分母（全段 / 锁定后）。
 
+#### predict 模式大量 `prediction_dt_out_of_range`（`max_prediction_s`）
+
+`robot_pose` 在 predict 模式下只把位姿外推到距**最新里程计时间戳**不超过 `max_prediction_s`（默认 0.12 s）
+的查询时刻。里程计时间戳是**扫描结束时刻**，所以在 10 Hz 激光下，下一帧落地前它的"年龄"约为
+`扫描周期 0.1 s + LIO 处理延迟`。由此：
+
+- `max_prediction_s = 0.12` 只有在 LIO 延迟 **< ~20 ms** 时才能覆盖整个扫描周期；
+- 延迟更大时，每个扫描周期的后一段查询都会被拒绝，并且与 20 Hz 查询的相位锁定（Gazebo 回归中
+  dt 稳定在 0.155 s，0.12 s 下锁定后可用率接近 0）。
+
+在 Gazebo 回归（1.0 m/s，0.4× 实时，LIO 延迟 p50 40 ms）中测得：0.12 / 0.15 / 0.20 / 0.25 s 分别覆盖约
+43% / 82% / 91% / 96% 的查询（墙钟采样）。**在 Orin NX 上实测 LIO 延迟后再取值**（`print_time_cost: true`
+看单帧处理时间；`/robot_pose_map/status` 的 `prediction_dt_s` 字段看实际外推量）。
+
+**推荐做法：`imu_predict: true`（universe.launch.py 默认）**。用实测 IMU 积分替代匀速模型，窗口
+`max_imu_prediction_s` 0.25 s；Gazebo 1.0 m/s 下 3D RMSE 1.3 cm、锁定后输出率 98%（匀速：9.8 cm）。
+要求：`robot_pose` 的 `imu_topic` 必须是 lio_node 积分的那个 IMU（`imu_topic` 与 `imu_acc_scale` 两边一致），
+且 IMU 与 LiDAR 同一时钟域（见 TIME_SYNC_NOTES.md）。下面的 `max_prediction_s` 只在 `imu_predict: false` 时生效。
+
+调大 `max_prediction_s` 是**可用率与外推误差之间的取舍**：外推误差大致按 `v·dt` 的加速度项和 `ω·dt`
+的转向项增长，0.2 s、1 m/s、急停时可达数厘米。不应为了让验收通过而调大它；要么降低 LIO 延迟，要么用
+实测外推误差证明更大的窗口仍满足 ≤5 cm。launch 参数：
+`ros2 launch universe_launch universe.launch.py max_prediction_s:=0.20`
+
 ### 2.7 退化场景（长走廊、隧道、玻璃、空旷）
 
 **代码现状（必须如实说明）**：前端 `fastlio2` **没有**退化检测。

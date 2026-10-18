@@ -11,7 +11,7 @@ LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_co
     m_effect_cloud_lidar.reset(new CloudType(10000, 1));
     m_effect_norm_vec.reset(new CloudType(10000, 1));
     m_nearest_points.resize(10000);
-    m_point_selected_flag.resize(10000, false);
+    m_point_selected_flag.resize(10000, 0);
 
     if (m_config.scan_resolution > 0.0)
     {
@@ -185,6 +185,18 @@ void LidarProcessor::process(SyncPackage &package)
     {
         pcl::copyPointCloud(*package.cloud, *m_cloud_down_lidar);
     }
+    // updateLossFunc()/incrCloudMap() index these by downsampled point; a dense scan (small
+    // scan_resolution, >=300 kHz lidar) exceeds any fixed capacity, so size them per scan.
+    const std::size_t n = m_cloud_down_lidar->size();
+    if (m_cloud_down_world->size() < n)
+    {
+        m_cloud_down_world->resize(n);
+        m_norm_vec->resize(n);
+        m_effect_cloud_lidar->resize(n);
+        m_effect_norm_vec->resize(n);
+        m_nearest_points.resize(n);
+        m_point_selected_flag.resize(n, 0);
+    }
     trimCloudMap();
     m_kf->update();
     incrCloudMap();
@@ -212,7 +224,7 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
     const double min_plane_quality = m_config.point_quality_thresh;
 #ifdef MP_EN
     omp_set_num_threads(MP_PROC_NUM);
-#pragma omp parallel for
+#pragma omp parallel for reduction(+ : neighbor_success, plane_fit_success, quality_pass, total_search_time)
 #endif
     for (int i = 0; i < size; i++)
     {

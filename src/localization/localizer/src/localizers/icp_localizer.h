@@ -25,7 +25,7 @@ struct ICPConfig
     double rough_max_corr_dist = 0.35;
     double refine_max_corr_dist = 0.15;
     double rough_min_inlier_ratio = 0.2;
-    double refine_min_inlier_ratio = 0.2;
+    double refine_min_inlier_ratio = 0.85;  // see localizer.yaml: true pose >= 0.996, wrong pose <= 0.76
 };
 
 class ICPLocalizer

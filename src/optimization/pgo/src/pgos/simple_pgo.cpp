@@ -16,7 +16,10 @@ SimplePGO::SimplePGO(const Config &config) : m_config(config)
     m_r_offset.setIdentity();
     m_t_offset.setZero();
 
-    if (m_config.sc.enabled)
+    // loop_enable_scan_context is the user-facing switch (pgo.yaml); sc.enabled is the
+    // descriptor-config field.  Both must be on: the node only ever set the former, so turning
+    // Scan Context off in pgo.yaml used to have no effect.
+    if (m_config.loop_enable_scan_context && m_config.sc.enabled)
         m_sc_db = std::make_unique<pgo_loop::ScanContextDB>(m_config.sc);
 }
 

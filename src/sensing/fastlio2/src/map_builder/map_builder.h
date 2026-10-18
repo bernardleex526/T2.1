@@ -31,6 +31,10 @@ public:
     void process(SyncPackage &package);
     BuilderStatus status() { return m_status; }
     std::shared_ptr<LidarProcessor> lidar_processor() { return m_lidar_processor; }
+    V3D lastGyro() const { return m_imu_processor->lastGyro(); }
+    // After an IMU stream discontinuity: drop the stateful IMU filters' history (call on the
+    // filter thread, before the next process()).
+    void resetImuFilters() { m_imu_processor->resetGaitFilter(); m_imu_processor->resetAccLpf(); }
 
 private:
     Config m_config;

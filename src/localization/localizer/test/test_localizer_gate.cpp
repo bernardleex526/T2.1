@@ -525,3 +525,42 @@ TEST(OffsetGate, AcceptedUpdateMovesThePublishedCorrectionAndRecoverySnapsIt)
     EXPECT_TRUE(gate.valid());
     EXPECT_NEAR((gate.published_t() - snap).norm(), 0.0, 1e-15);
 }
+
+// Yaw-drift regression: candidates whose rotation is the TRUE rotation plus a small non-orthonormal
+// perturbation (what a float ICP result carries, compounding when each ICP is seeded from the last)
+// must not bias the published transform.  Before the fix the EMA quaternion-converted those raw
+// matrices every update and the published yaw crept away monotonically.
+TEST(OffsetGate, NonOrthonormalCandidatesDoNotBiasThePublishedRotation)
+{
+    OffsetOutlierGate gate(testConfig());
+    const M3D truth = rotZ(0.3);
+    const V3D t(1.0, -2.0, 0.0), body(0.5, 0.2, 0.0);
+    gate.reset(truth, t);
+    // a fixed shear-like non-orthonormal error, growing with the update index as it does live
+    M3D shear = M3D::Zero();
+    shear(0, 1) = 1.0;
+    for (int k = 1; k <= 400; ++k)
+    {
+        const M3D cand = truth + (5e-4 * k / 400.0) * shear;
+        const auto out = gate.update(cand, t, body);
+        ASSERT_TRUE(out.accepted);
+    }
+    const M3D &pub = gate.published_r();
+    EXPECT_LT((pub * pub.transpose() - M3D::Identity()).norm(), 1e-12);    // a proper rotation
+    EXPECT_LT((gate.reference_r() * gate.reference_r().transpose() - M3D::Identity()).norm(), 1e-12);
+    const double yaw_err = std::atan2(pub(1, 0), pub(0, 0)) - 0.3;
+    EXPECT_LT(std::fabs(yaw_err), 3e-4);  // rad; the shear itself is only ~2.5e-4 rad of yaw at most
+}
+
+TEST(OffsetGate, OrthonormalizedReturnsTheNearestRotation)
+{
+    const M3D r = rotZ(0.7) * Eigen::AngleAxisd(0.2, V3D::UnitX()).toRotationMatrix();
+    M3D noisy = r;
+    noisy(0, 0) += 1e-3;
+    noisy(1, 2) -= 2e-3;
+    const M3D p = orthonormalized(noisy);
+    EXPECT_LT((p * p.transpose() - M3D::Identity()).norm(), 1e-12);
+    EXPECT_NEAR(p.determinant(), 1.0, 1e-12);
+    EXPECT_LT(Eigen::Quaterniond(p).angularDistance(Eigen::Quaterniond(r)), 3e-3);
+    EXPECT_LT((orthonormalized(r) - r).norm(), 1e-12);  // already a rotation: unchanged
+}

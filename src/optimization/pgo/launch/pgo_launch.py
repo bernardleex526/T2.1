@@ -20,7 +20,7 @@ def generate_launch_description():
         [
             launch_ros.actions.Node(
                 package="fastlio2",
-                namespace="fastlio2",
+                namespace="mapping",  # the localizer/pgo yamls subscribe to /mapping/*
                 executable="lio_node",
                 name="lio_node",
                 output="screen",

@@ -130,10 +130,13 @@ export ROS_LOCALHOST_ONLY=1
 |:---|:---|:---|
 | `world_frame → body_frame` | `lio_node` | 配置值即 `odom → body`。这是 `lio_node` 唯一发布的 TF |
 | `map → odom` | `pgo_node`（建图）**或** `localizer_node`（定位） | **两者互斥，不得同时运行** |
-| `body → base_link` | `universe.launch.py` 的静态发布器 | 参数 `body_base_{x,y,z,roll,pitch,yaw}`，默认全 0 |
+| `body → base_link` | `robot_state_publisher`（`quadruped_description/rsp.launch.py`） | URDF 根关节；由 `imu_*` 安装参数**取逆**自动得到 |
+| `base_link → imu_link / lidar_link / camera_link` | `robot_state_publisher` | launch 参数 `imu_*`、`lidar_*`、`cam_*`（相对 base_link，须实测） |
 
-- **不存在** `body → lidar` / `body → imu` 静态 TF。`body` 本身就是 IMU 机体系，外参
-  `ext_il` 只在估计器内部使用。
+- 完整的树为 `map → odom → body(=IMU) → base_link → {imu_link, lidar_link, camera_link}`，每个 frame
+  只有一个父节点。`body` 就是 FastLIO2 估计的 IMU 系，所以 `imu_link` 与 `body` 重合（零变换）。
+  此前 URDF 发布 `base_link → body`、launch 又静态发布 `body → base_link`，导致 `body` 有两个父节点并成环，现已删除那个静态发布器。
+- `ext_il`（lio yaml）必须等于由 `imu_*` 与 `lidar_*` 两个安装参数推出的 T_imu←lidar。
 - `localizer` 的 `local_frame` 会被**入站 odom 的 `header.frame_id` 覆盖**，因此 `map → odom`
   的 child 名实际由 `lio_odom` 决定（本仓库为 `odom`）。
 
@@ -465,10 +468,9 @@ python3 tools/odom_static_drift.py --bag static10 --topic /mapping/lio_odom
 
 ```bash
 # 7.1 启动建图（lio_node + pgo_node）
-#     注意：sensing.launch.py 目前把 config_path 硬编码为 config/lio.yaml，
-#     且没有声明任何 launch 参数；要使用 Orin NX profile，必须显式传 config_path。
-#     驱动：sensing.launch.py / universe.launch.py 启动的是 livox_ros_driver2（MID360），
-#     对 Airy 无效 —— 必须改用厂商 RoboSense 驱动，或在 launch 中替换驱动节点。
+#     sensing.launch.py / universe.launch.py 默认 config_file:=airy.yaml、lidar_vendor:=robosense；
+#     RoboSense 驱动(rslidar_sdk, POINT_TYPE=XYZIRT)本身不在 launch 中，须单独启动。
+#     airy.yaml 出厂会被 preflight 拒绝(缺实测 ext_il 与 IMU 噪声)，先填入实测值。
 ros2 run fastlio2 lio_node --ros-args \
     -p config_path:=$PWD/src/sensing/fastlio2/config/<你的.yaml> &
 ros2 run pgo pgo_node --ros-args \

@@ -57,7 +57,9 @@ python3 tools/rslidar_pcl2_probe.py --topic /rslidar_points --once
 
 - 逐点时间的跨度必须约等于一个扫描周期（Airy 10 Hz → 0.1 s）；
 - 由“哪个 10 的幂次能把跨度折算到约一个扫描周期”决定 `pcl2_time_scale`；
-- 字段类型必须是 `FLOAT32`/`FLOAT64`。`UINT32` 纳秒是真实存在但**本仓库读不了**的
+- 字段类型可以是 `FLOAT32`/`FLOAT64`/`UINT32`/`INT32`（`utils.cpp` 的 `read_time` 都支持）；
+  rslidar_sdk XYZIRT 的 `timestamp` 是 FLOAT64 **绝对秒**，`pcl2_time_scale` 应为 1.0，lio_node 以最早
+  点的时间作为扫描起点（与驱动的 `ts_first_point` 设置无关）。下面这句旧描述已过时：`UINT32` 纳秒是真实存在但**本仓库读不了**的
   字段（`pcl2_to_PCL` 只接受浮点），此时工具以退出码 2 明确拒绝，而不是给出一个
   会让补偿静默失效的配置值。
 

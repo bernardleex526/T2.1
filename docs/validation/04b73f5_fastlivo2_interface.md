@@ -168,7 +168,7 @@ ros2 service call /localizer/relocalize_check interface/srv/IsValid "{code: 0}"
 | 图像分支（着色） | 源码存在、**默认未接线** | 设 `image_topic`、启动相机、核对内外参 | §1、§4.4 |
 | 视觉残差 / 光流 / 面元地图 | **未实现** | 属**需求**，非接口：需扩状态量、扩残差、扩地图与雅可比（见 §5.3） | §1.2；死代码仅 `pinhole_camera.*` |
 | 视觉融合权重 / 光度权重参数 | **不存在** | 全仓无此类参数或 setter；`CVUtils::weightPixel` 是双线性插值权重（死代码），与“融合权重”无关（见 §5.3 C） | 全仓 grep |
-| 足式里程计融合（电机编码器/腿部运动学，非轮式） | **未实现** | `lio_node` 仅订阅 IMU/LiDAR/Image（`lio_node.cpp:108-137`），无 twist/里程计输入；需新增观测模型，且该观测须先独立标定与资格评估 | §7 |
+| 足式/轮式里程计融合 | **已实现，出厂关闭** | `use_leg_odom: true` 订阅 `nav_msgs/Odometry`（`twist.linear`，base_link 系）；在滤波线程按扫描末时刻对齐，经 `leg_odom_ext_ib` 外参与 ω×r 杆臂变到 IMU 系后做 `IESKF::updateLegVelocity`（2026-10-18 修正：此前在传感器回调线程直接更新滤波器，存在数据竞争）。观测噪声须先实测 | §7 |
 
 ### 5.3 FastLIVO2 升级接口提案：**现有已实现接口** vs **未来适配层**
 

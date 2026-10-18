@@ -127,3 +127,47 @@ TEST(GaitIntegration, ResetIsSafeWhenInert)
 }
 
 }  // namespace
+
+// ---- ButterworthLPF (IMU low-pass) ---------------------------------------------------------
+
+// Primed on the first sample: a constant input (gravity at rest) passes through unchanged from
+// the very first output.  From zero state it used to ramp up from 0 m/s^2, which the static
+// IMU-init window read as a fake gravity transient.
+TEST(ImuLowPass, ConstantInputHasNoStartupTransient)
+{
+    ButterworthLPF f;
+    f.setup(40.0, 200.0);
+    ASSERT_TRUE(f.initialized);
+    const V3D g(0.03, -0.02, 9.81);
+    for (int i = 0; i < 50; ++i)
+    {
+        const V3D y = f.filter(g);
+        EXPECT_LT((y - g).norm(), 1e-9) << "sample " << i;
+    }
+}
+
+// The same coefficients applied to two streams give the same delay: a step that reaches the
+// accel and gyro filters on the same sample comes out of both on the same sample.
+TEST(ImuLowPass, EqualCoefficientsKeepTwoStreamsAligned)
+{
+    ButterworthLPF a, w;
+    a.setup(40.0, 200.0);
+    w.setup(40.0, 200.0);
+    a.filter(V3D::Zero());
+    w.filter(V3D::Zero());
+    for (int i = 0; i < 20; ++i)
+    {
+        const V3D ya = a.filter(V3D(1, 0, 0));
+        const V3D yw = w.filter(V3D(0, 2, 0));
+        EXPECT_NEAR(ya.x(), 0.5 * yw.y(), 1e-12);
+    }
+}
+
+// An unusable configuration (cutoff at/above Nyquist) is inert, not a broken filter.
+TEST(ImuLowPass, CutoffAboveNyquistIsInert)
+{
+    ButterworthLPF f;
+    f.setup(120.0, 200.0);
+    EXPECT_FALSE(f.initialized);
+    EXPECT_EQ(f.filter(V3D(1, 2, 3)), V3D(1, 2, 3));
+}

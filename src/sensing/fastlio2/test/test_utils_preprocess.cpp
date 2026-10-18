@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -237,4 +238,83 @@ TEST(UtilsPreprocess, Pcl2WithoutTimeFieldKeepsZeroCurvature)
     EXPECT_EQ(intensities(*c), (std::vector<int>{1, 5, 7, 9, 11}));
     for (const auto &p : *c)
         EXPECT_FLOAT_EQ(p.curvature, 0.0f);
+}
+
+// ---- pcl2_to_PCL: invalid points, unordered times, absolute (epoch) times -------------------
+
+// Builds the RoboSense XYZIRT layout: x,y,z,intensity FLOAT32, ring UINT16, timestamp FLOAT64
+// (point_step 26).  Every point is 1 m out; `t[i]` is the absolute per-point time.
+static sensor_msgs::msg::PointCloud2::SharedPtr makeXyzirt(const std::vector<double> &t)
+{
+    using PF = sensor_msgs::msg::PointField;
+    auto msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
+    msg->height = 1;
+    msg->width = static_cast<uint32_t>(t.size());
+    msg->point_step = 26;
+    msg->row_step = msg->point_step * msg->width;
+    const char *names[] = {"x", "y", "z", "intensity"};
+    for (uint32_t k = 0; k < 4; ++k) {
+        PF f; f.name = names[k]; f.offset = 4 * k; f.datatype = PF::FLOAT32; f.count = 1;
+        msg->fields.push_back(f);
+    }
+    PF r; r.name = "ring"; r.offset = 16; r.datatype = PF::UINT16; r.count = 1; msg->fields.push_back(r);
+    PF ts; ts.name = "timestamp"; ts.offset = 18; ts.datatype = PF::FLOAT64; ts.count = 1; msg->fields.push_back(ts);
+    msg->data.assign(static_cast<std::size_t>(msg->point_step) * msg->width, 0);
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        uint8_t *b = msg->data.data() + i * msg->point_step;
+        const float xyzi[4] = {1.0f, 0.0f, 0.0f, static_cast<float>(i)};
+        std::memcpy(b, xyzi, sizeof(xyzi));
+        std::memcpy(b + 18, &t[i], sizeof(double));
+    }
+    return msg;
+}
+
+// NaN/Inf coordinates (driver dense_points=false) must be dropped, not slip through the range test.
+TEST(UtilsPreprocess, Pcl2DropsNonFinitePoints)
+{
+    auto msg = makePcl2(13);
+    float *p4 = reinterpret_cast<float *>(msg->data.data() + 4 * msg->point_step);
+    float *p6 = reinterpret_cast<float *>(msg->data.data() + 6 * msg->point_step);
+    p4[0] = std::nanf("");
+    p6[2] = INFINITY;
+    Wrapped c = Utils::pcl2_to_PCL(msg, 1, 0.5, 20.0, "time", 1.0);
+    EXPECT_EQ(intensities(*c), (std::vector<int>{0, 1, 2, 5, 7, 8, 9, 11, 12}));
+}
+
+// Points need not be stored in time order: the origin is the EARLIEST retained time, so every
+// per-point offset is >= 0 and the span is exactly max - min.
+TEST(UtilsPreprocess, Pcl2TimeOriginIsEarliestPointNotFirstStored)
+{
+    const std::vector<double> t = {0.05, 0.00, 0.09, 0.02};
+    double t0 = -1.0;
+    Wrapped c = Utils::pcl2_to_PCL(makeXyzirt(t), 1, 0.5, 20.0, "timestamp", 1.0, 0, &t0);
+    ASSERT_EQ(c->size(), 4u);
+    EXPECT_NEAR(t0, 0.0, 1e-12);
+    EXPECT_NEAR(c->points[0].curvature, 50.0f, 1e-3f);
+    EXPECT_NEAR(c->points[1].curvature, 0.0f, 1e-6f);
+    EXPECT_NEAR(c->points[2].curvature, 90.0f, 1e-3f);
+}
+
+// Airy XYZIRT: absolute epoch seconds in FLOAT64.  The scan start is reported in full double
+// precision and the per-point offsets keep sub-millisecond resolution (a float of 1.7e9 s would
+// quantize to ~128 s).
+TEST(UtilsPreprocess, Pcl2AbsoluteEpochTimesKeepPrecisionAndReportScanStart)
+{
+    const double e = 1730000000.123456;
+    const std::vector<double> t = {e + 0.0999, e, e + 0.00005, e + 0.05};
+    double t0 = 0.0;
+    Wrapped c = Utils::pcl2_to_PCL(makeXyzirt(t), 1, 0.5, 20.0, "timestamp", 1.0, 0, &t0);
+    ASSERT_EQ(c->size(), 4u);
+    EXPECT_NEAR(t0, e, 1e-6);
+    EXPECT_NEAR(c->points[0].curvature, 99.9f, 1e-2f);
+    EXPECT_NEAR(c->points[2].curvature, 0.05f, 1e-2f);
+    EXPECT_NEAR(c->points[3].curvature, 50.0f, 1e-2f);
+}
+
+// Without a time field the reported scan start is NaN (the caller keeps the header stamp).
+TEST(UtilsPreprocess, Pcl2NoTimeFieldReportsNaNScanStart)
+{
+    double t0 = 0.0;
+    Utils::pcl2_to_PCL(makePcl2(13), 1, 0.5, 20.0, "", 1.0, 0, &t0);
+    EXPECT_TRUE(std::isnan(t0));
 }

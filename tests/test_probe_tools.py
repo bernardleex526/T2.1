@@ -552,6 +552,29 @@ class TestPreflight(unittest.TestCase):
         self.assertEqual(rc, 2, out)
         self.assertIn("ext_il", out)
 
+    def test_shipped_airy_and_odin1_profiles_are_not_ready(self):
+        """The default launch profiles carry no measured extrinsic or IMU noise yet."""
+        for name in ("airy.yaml", "odin1.yaml"):
+            shipped = os.path.join(ROOT, "src", "sensing", "fastlio2", "config", name)
+            rc, out = self._run(shipped)
+            self.assertEqual(rc, 2, name + "\n" + out)
+            self.assertIn("ext_il", out)
+
+    def test_mid360_extrinsic_on_a_pointcloud2_lidar_is_blocking(self):
+        p = self._mutated(lidar_type="pointcloud2",
+                          ext_il=[-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0, 1.0])
+        rc, out = self._run(p)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("MID360", out)
+
+    def test_nanosecond_scale_on_seconds_timestamp_is_blocking(self):
+        p = self._mutated(pcl2_time_field="timestamp", pcl2_time_scale=1.0e-9)
+        rc, out = self._run(p)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("SECONDS", out)
+        rc2, out2 = self._run(self._mutated(pcl2_time_field="timestamp", pcl2_time_scale=1.0))
+        self.assertEqual(rc2, 0, out2)
+
     def test_missing_extrinsic_is_blocking(self):
         rc, out = self._run(self._mutated(ext_il=None))
         self.assertEqual(rc, 2, out)

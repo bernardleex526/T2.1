@@ -67,3 +67,6 @@ id_ed25519.*
 
 # Explicit inclusions for necessary test fixtures
 !simulation/synthetic_data/*.json
+
+# Third-party sources cloned into the workspace by the README build steps (e.g. fast_gicp)
+src/third_party/

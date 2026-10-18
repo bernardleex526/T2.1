@@ -544,3 +544,62 @@ TEST(GateTrust, ResetForgetsTheAnswer)
     EXPECT_LT(trust.age(100.1), 0.0);
 }
 
+
+// ---- IMU-propagated prediction (predictCurrentPose with an IMU buffer) -----------------------
+
+namespace
+{
+// samples on [t0, t1] of a level body (identity attitude) with constant world acceleration a_w
+std::deque<imu_prop::ImuSample> levelImu(double t0, double t1, const Eigen::Vector3d &a_w)
+{
+    std::deque<imu_prop::ImuSample> d;
+    for (double t = t0; t <= t1 + 1e-9; t += 0.005)
+        d.push_back({t, Eigen::Vector3d::Zero(), a_w - Eigen::Vector3d(0, 0, -9.81)});
+    return d;
+}
+} // namespace
+
+// A vertical acceleration (gait heave) the constant-velocity model cannot know about: the IMU path
+// follows it, the constant-velocity path does not.
+TEST(PredictCurrentPose, ImuPathFollowsMeasuredAccelerationConstantVelocityDoesNot)
+{
+    CurrentPoseConfig cfg;
+    const auto map_odom = tr("map", "odom", 100.0, 0.0, 0.0, 0.0, 0.0);
+    const auto prev = odomMsg("odom", "body", 100.00, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    const auto latest = odomMsg("odom", "body", 100.10, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    const auto query = timeFromSeconds(100.25);  // dt = 0.15 s: beyond the 0.12 s CV bound
+    const Eigen::Vector3d a(0.0, 0.0, 3.0);
+    const auto imu = levelImu(99.9, 100.3, a);
+
+    const auto cv = predictCurrentPose(map_odom, prev, latest, identityLever(), query, cfg, true, kRecentGate);
+    EXPECT_FALSE(cv.available);
+    EXPECT_EQ(cv.reject_reason, map_pose_reason::kDtOutOfRange);
+
+    const auto r = predictCurrentPose(map_odom, prev, latest, identityLever(), query, cfg, true, kRecentGate,
+                                      &imu, 9.81);
+    ASSERT_TRUE(r.available) << r.reject_reason;
+    EXPECT_NEAR(r.pose.position.x, 1.0 * 0.15, 1e-6);
+    EXPECT_NEAR(r.pose.position.z, 0.5 * 3.0 * 0.15 * 0.15, 1e-6);
+    EXPECT_NEAR(stampSeconds(r.stamp), 100.25, 1e-9);
+}
+
+// The IMU path keeps every gate: no buffer coverage -> unavailable with a named reason, and the
+// longer IMU bound still applies.
+TEST(PredictCurrentPose, ImuPathNeedsCoverageAndKeepsItsOwnBound)
+{
+    CurrentPoseConfig cfg;
+    const auto map_odom = tr("map", "odom", 100.0, 0.0, 0.0, 0.0, 0.0);
+    const auto prev = odomMsg("odom", "body", 100.00, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    const auto latest = odomMsg("odom", "body", 100.10, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    const auto early_imu = levelImu(99.9, 100.12, Eigen::Vector3d::Zero());  // stops before the query
+    const auto r1 = predictCurrentPose(map_odom, prev, latest, identityLever(), timeFromSeconds(100.25), cfg,
+                                       true, kRecentGate, &early_imu, 9.81);
+    EXPECT_FALSE(r1.available);
+    EXPECT_EQ(r1.reject_reason, map_pose_reason::kImuCoverage);
+
+    const auto imu = levelImu(99.9, 100.6, Eigen::Vector3d::Zero());
+    const auto r2 = predictCurrentPose(map_odom, prev, latest, identityLever(), timeFromSeconds(100.40), cfg,
+                                       true, kRecentGate, &imu, 9.81);  // dt 0.30 > 0.25
+    EXPECT_FALSE(r2.available);
+    EXPECT_EQ(r2.reject_reason, map_pose_reason::kDtOutOfRange);
+}

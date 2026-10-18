@@ -78,7 +78,9 @@ KNOWN_KEYS = {
     "imu_acc_normalize", "imu_init_mode", "imu_init_min_samples",
     # estimator
     "near_search_num", "ieskf_max_iter", "gravity_align", "esti_il",
-    "point_quality_thresh", "lidar_cov_inv",
+    "point_quality_thresh", "lidar_cov_inv", "imu_lpf_enable", "imu_lpf_cutoff_hz",
+    "imu_lpf_sample_rate_hz", "imu_saturation_detect", "imu_saturation_limit_mps2",
+    "use_leg_odom", "leg_odom_topic", "leg_odom_cov", "leg_odom_ext_ib", "leg_odom_max_age_s",
     "max_bias_gyro", "max_bias_accel", "max_velocity",
     # sensor adaptation
     "lidar_type", "lidar_max_line", "imu_acc_scale",
@@ -96,6 +98,17 @@ KNOWN_KEYS = {
 # Upstream FAST-LIO group names.  The node does NOT read these; if one appears,
 # the operator copied a config written for a different loader.
 UPSTREAM_GROUPS = {"common", "mapping", "preprocess", "publish", "filter_size_surf"}
+
+# Extrinsics that are known NOT to belong to an Airy/Odin1 + platform IMU: the Livox MID360
+# built-in IMU offset shipped in lio.yaml.  A profile carrying it copied another sensor's numbers.
+KNOWN_FOREIGN_EXT_IL = {
+    (-0.011, -0.02329, 0.04412): "the Livox MID360 built-in IMU offset from lio.yaml",
+}
+
+# Point-time field names whose datatype is FLOAT64 SECONDS in the vendor driver (rslidar_sdk
+# POINT_TYPE=XYZIRT).  A nanosecond scale on them multiplies a 0.1 s scan span down to ~1e-10 s,
+# which silently disables in-scan motion compensation.
+SECONDS_TIME_FIELDS = {"timestamp"}
 
 
 class Report:
@@ -181,6 +194,11 @@ def check_extrinsic(cfg: Dict[str, Any], rep: Report) -> None:
     if all(abs(x) < 1e-12 for x in t):
         rep.warn("ext_il: translation is exactly zero. That is possible but unusual; "
                  "confirm it was measured rather than left as a placeholder")
+    for known_t, what in KNOWN_FOREIGN_EXT_IL.items():
+        if all(abs(a - b) < 1e-6 for a, b in zip(t, known_t)):
+            if cfg.get("lidar_type") == "pointcloud2":
+                rep.error(f"ext_il: translation equals {what}. That is another sensor's mounting, "
+                          "not this LiDAR/IMU pair: measure it (docs/calibration_procedure.md).")
     rep.note(f"ext_il: t=[{t[0]:+.4f} {t[1]:+.4f} {t[2]:+.4f}] m, |q|={qn:.6f}")
 
 
@@ -215,6 +233,11 @@ def check_time_field(cfg: Dict[str, Any], rep: Report, allow_none: bool) -> None
         if s > 1.0:
             rep.warn(f"pcl2_time_scale: {s:g} > 1. A scale that enlarges the offset is "
                      "unusual (the field is normally in s/ms/us/ns); verify the units")
+        if field in SECONDS_TIME_FIELDS and s < 1e-2:
+            rep.error(f"pcl2_time_scale: {s:g} on '{field}'. rslidar_sdk publishes '{field}' as "
+                      "FLOAT64 SECONDS, so this scale shrinks a 0.1 s scan to ~1e-10 s and "
+                      "disables in-scan motion compensation. Use 1.0 (confirm with "
+                      "tools/rslidar_pcl2_probe.py).")
 
 
 def check_imu(cfg: Dict[str, Any], rep: Report) -> None:

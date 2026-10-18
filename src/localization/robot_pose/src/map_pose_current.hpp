@@ -26,6 +26,9 @@
 #include <string>
 
 #include <Eigen/Geometry>
+#include <deque>
+
+#include "imu_propagation.hpp"
 
 #include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/pose.hpp>
@@ -96,6 +99,11 @@ struct CurrentPoseConfig
     // max_prediction_s = 0.12 s is this service's PRE-REGISTERED short-window upper bound; it is
     // not a literature guarantee and must not be widened to make an acceptance case pass.
     double max_prediction_s = 0.12;
+    // Horizon bound when the pose is propagated with the measured IMU samples instead of the
+    // constant-velocity model (predictCurrentPose with an ImuInput).  The IMU follows the actual
+    // accelerations / gait heave, so the window can cover one lidar period + LIO latency without
+    // the overshoot constant-velocity extrapolation shows there (Gazebo: Z 12 cm at 0.2 s).
+    double max_imu_prediction_s = 0.25;
     double min_odom_interval_s = 0.02;
     double max_odom_interval_s = 0.20;
 };
@@ -134,6 +142,7 @@ inline constexpr const char *kFutureOdom = "future_odom";
 inline constexpr const char *kOdomOrder = "odom_order";
 inline constexpr const char *kOdomInterval = "odom_interval_out_of_range";
 inline constexpr const char *kDtOutOfRange = "prediction_dt_out_of_range";
+inline constexpr const char *kImuCoverage = "imu_coverage_missing";
 inline constexpr const char *kAngleAmbiguous = "rotation_angle_ambiguous";
 inline constexpr const char *kOdomAge = "odom_age_exceeded";
 inline constexpr const char *kCorrectionAge = "correction_age_exceeded";
@@ -283,7 +292,9 @@ inline CurrentPoseResult predictCurrentPose(const geometry_msgs::msg::TransformS
                                             const builtin_interfaces::msg::Time &query_stamp,
                                             const CurrentPoseConfig &cfg,
                                             bool gate_valid = false,
-                                            double gate_answer_age_s = -1.0)
+                                            double gate_answer_age_s = -1.0,
+                                            const std::deque<imu_prop::ImuSample> *imu = nullptr,
+                                            double gravity = 9.81)
 {
     using namespace map_pose_detail;
     CurrentPoseResult out;
@@ -378,8 +389,8 @@ inline CurrentPoseResult predictCurrentPose(const geometry_msgs::msg::TransformS
         out.reject_reason = map_pose_reason::kOdomInterval;
         return out;
     }
-    // 8. ...and carried forward no further than the pre-registered bound
-    if (dt > cfg.max_prediction_s)
+    // 8. ...and carried forward no further than the pre-registered bound of the model in use
+    if (dt > (imu ? cfg.max_imu_prediction_s : cfg.max_prediction_s))
     {
         out.reject_reason = map_pose_reason::kDtOutOfRange;
         return out;
@@ -419,26 +430,48 @@ inline CurrentPoseResult predictCurrentPose(const geometry_msgs::msg::TransformS
         return out;
     }
 
-    // constant angular rate over h, zero-rate limit -> identity increment
-    Eigen::Vector3d omega = Eigen::Vector3d::Zero();
-    if (rel_angle > 0.0)
-        omega = q_rel.vec().normalized() * (rel_angle / h);
-    const double rot_angle = omega.norm() * dt;
-    Eigen::Quaterniond q_pred = q_latest;
-    if (rot_angle > 0.0)
-    {
-        Eigen::Quaterniond q_delta(Eigen::AngleAxisd(rot_angle, omega.normalized()));
-        if (q_delta.w() < 0.0)
-            q_delta.coeffs() *= -1.0; // shortest SO(3) branch
-        q_pred = (q_latest * q_delta).normalized();
-        if (q_pred.w() < 0.0)
-            q_pred.coeffs() *= -1.0;
-    }
-
-    // constant-velocity translation: the body-frame linear twist rotated into the odom frame
+    Eigen::Quaterniond q_pred;
+    Eigen::Vector3d p_pred;
     const Eigen::Vector3d p_latest(pp.x, pp.y, pp.z);
     const Eigen::Vector3d v_child(pv.x, pv.y, pv.z);
-    const Eigen::Vector3d p_pred = p_latest + (q_latest * v_child) * dt;
+    if (imu)
+    {
+        // IMU propagation from the newest odometry state (body-frame twist -> odom-frame velocity)
+        imu_prop::State st;
+        st.t = t_latest;
+        st.q = q_latest.normalized();
+        st.p = p_latest;
+        st.v = st.q * v_child;
+        if (imu_prop::propagate(st, *imu, query_s, gravity) != imu_prop::Status::Ok)
+        {
+            out.reject_reason = map_pose_reason::kImuCoverage;
+            return out;
+        }
+        q_pred = st.q;
+        if (q_pred.w() < 0.0)
+            q_pred.coeffs() *= -1.0;
+        p_pred = st.p;
+    }
+    else
+    {
+        // constant angular rate over h, zero-rate limit -> identity increment
+        Eigen::Vector3d omega = Eigen::Vector3d::Zero();
+        if (rel_angle > 0.0)
+            omega = q_rel.vec().normalized() * (rel_angle / h);
+        const double rot_angle = omega.norm() * dt;
+        q_pred = q_latest;
+        if (rot_angle > 0.0)
+        {
+            Eigen::Quaterniond q_delta(Eigen::AngleAxisd(rot_angle, omega.normalized()));
+            if (q_delta.w() < 0.0)
+                q_delta.coeffs() *= -1.0; // shortest SO(3) branch
+            q_pred = (q_latest * q_delta).normalized();
+            if (q_pred.w() < 0.0)
+                q_pred.coeffs() *= -1.0;
+        }
+        // constant-velocity translation: the body-frame linear twist rotated into the odom frame
+        p_pred = p_latest + (q_latest * v_child) * dt;
+    }
 
     Tf odom_child_pred;
     odom_child_pred.tx = p_pred.x();

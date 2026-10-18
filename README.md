@@ -113,10 +113,17 @@ cmake -B /tmp/Sophus/build -S /tmp/Sophus -DCMAKE_BUILD_TYPE=Release -DSOPHUS_US
 cmake --build /tmp/Sophus/build -j$(nproc)
 sudo cmake --install /tmp/Sophus/build
 
+# 步骤 4b：获取 fast_gicp (pgo 必需：find_package(fast_gicp REQUIRED)，pgo/package.xml 已声明依赖)
+# fast_gicp 自带 package.xml，作为第三方 ROS 包放进工作区 src/ 由 colcon 一并构建；
+# CUDA 版本(VGICP-CUDA)不需要，关闭以便在 Orin NX / 无 CUDA 的 x86 上构建。
+git clone https://github.com/SMRT-AIST/fast_gicp.git src/third_party/fast_gicp
+git -C src/third_party/fast_gicp checkout 0e7ec1441c99f7be453db2ea216d5de029387417   # 已验证可构建并通过 pgo 测试的版本
+# 缺少本步时 pgo 在 colcon build 阶段报 "Could not find a package configuration file provided by fast_gicp"
+
 # 步骤 5：标准编译本仓库全部 ROS 2 软件包 (纯净构建，无本地覆盖层)
 source /opt/ros/humble/setup.bash
 colcon build --parallel-workers 4 \
-    --cmake-args -DCMAKE_BUILD_TYPE=Release -DAMENT_CMAKE_SYMLINK_INSTALL=OFF
+    --cmake-args -DCMAKE_BUILD_TYPE=Release -DAMENT_CMAKE_SYMLINK_INSTALL=OFF -DBUILD_VGICP_CUDA=OFF
 
 # 步骤 6：激活工作区环境变量
 source install/setup.bash

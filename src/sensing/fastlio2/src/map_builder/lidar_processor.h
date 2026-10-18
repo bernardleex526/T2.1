@@ -45,7 +45,7 @@ private:
     CloudType::Ptr m_cloud_lidar;
     CloudType::Ptr m_cloud_down_lidar;
     CloudType::Ptr m_cloud_down_world;
-    std::vector<bool> m_point_selected_flag;
+    std::vector<char> m_point_selected_flag; // not vector<bool>: written per index from an OpenMP loop
     CloudType::Ptr m_norm_vec;
     CloudType::Ptr m_effect_cloud_lidar;
     CloudType::Ptr m_effect_norm_vec;

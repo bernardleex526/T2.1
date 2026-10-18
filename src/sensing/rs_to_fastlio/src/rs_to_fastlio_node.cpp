@@ -49,7 +49,9 @@ public:
         output_topic_ = this->declare_parameter<std::string>("output_topic", "/sensing/lidar/pointcloud");
         target_frame_ = this->declare_parameter<std::string>("target_frame", "");
         time_field_name_ = this->declare_parameter<std::string>("time_field_name", "timestamp");
-        time_scale_ = this->declare_parameter<double>("time_scale", 1.0e-9);
+        // seconds per raw time unit; 0 = by datatype: FLOAT32/FLOAT64 are seconds (rslidar_sdk XYZIRT
+        // `timestamp`), UINT32/INT32 are nanoseconds.  The old fixed 1e-9 zeroed every FLOAT64-second span.
+        time_scale_ = this->declare_parameter<double>("time_scale", 0.0);
         min_range_ = this->declare_parameter<double>("min_range", 0.3);
         max_range_ = this->declare_parameter<double>("max_range", 50.0);
 
@@ -94,7 +96,8 @@ private:
         }
 
         int off_intensity = find_offset("intensity", dt);
-        int off_ring = find_offset("ring", dt);
+        int ring_datatype = 0;
+        int off_ring = find_offset("ring", ring_datatype);
 
         int time_datatype = 0;
         int off_time = find_offset(time_field_name_, time_datatype);
@@ -113,6 +116,16 @@ private:
         {
             if (off < 0) return 0.0f;
             const uint8_t *p = msg->data.data() + base + off;
+            return *reinterpret_cast<const float *>(p);
+        };
+
+        auto read_ring = [&](std::size_t base) -> float
+        {
+            const uint8_t *p = msg->data.data() + base + off_ring;
+            if (ring_datatype == sensor_msgs::msg::PointField::UINT16)
+                return static_cast<float>(*reinterpret_cast<const uint16_t *>(p));
+            if (ring_datatype == sensor_msgs::msg::PointField::UINT8)
+                return static_cast<float>(*p);
             return *reinterpret_cast<const float *>(p);
         };
 
@@ -145,25 +158,25 @@ private:
                 float y = read_float(base, off_y);
                 float z = read_float(base, off_z);
                 float dist_sq = x * x + y * y + z * z;
-                if (dist_sq >= min_range_ * min_range_ && dist_sq <= max_range_ * max_range_)
+                if (std::isfinite(dist_sq) && dist_sq >= min_range_ * min_range_ && dist_sq <= max_range_ * max_range_)
                 {
                     double t = read_raw_time(base);
                     if (t < min_t) min_t = t;
                     if (t > max_t) max_t = t;
                 }
             }
-            if (min_t >= max_t) min_t = 0.0;
+            // a scan with no in-range point, or a single time for all points, carries no in-scan
+            // timing: treat as untimed (curvature 0) instead of rebasing absolute stamps on 0
+            if (!(min_t < max_t)) has_time = false;
         }
 
         pcl::PointCloud<rs_to_fastlio::PointXYZINormalTime> out_cloud;
         out_cloud.reserve(total_num);
 
-        // Auto-scale detection: if raw delta between max_t and min_t is large (>1e6), it's nanoseconds
         double eff_scale = time_scale_;
-        if (has_time && (max_t - min_t) > 1e6 && eff_scale >= 1.0)
-        {
-            eff_scale = 1.0e-9;
-        }
+        if (eff_scale <= 0.0)
+            eff_scale = (time_datatype == sensor_msgs::msg::PointField::UINT32 ||
+                         time_datatype == sensor_msgs::msg::PointField::INT32) ? 1.0e-9 : 1.0;
 
         for (std::size_t i = 0; i < total_num; ++i)
         {
@@ -172,7 +185,7 @@ private:
             float y = read_float(base, off_y);
             float z = read_float(base, off_z);
             float dist_sq = x * x + y * y + z * z;
-            if (dist_sq < min_range_ * min_range_ || dist_sq > max_range_ * max_range_)
+            if (!std::isfinite(dist_sq) || dist_sq < min_range_ * min_range_ || dist_sq > max_range_ * max_range_)
                 continue;
 
             rs_to_fastlio::PointXYZINormalTime pt;
@@ -180,7 +193,7 @@ private:
             pt.y = y;
             pt.z = z;
             pt.intensity = read_float(base, off_intensity);
-            pt.normal_x = (off_ring >= 0) ? read_float(base, off_ring) : 0.0f;
+            pt.normal_x = (off_ring >= 0) ? read_ring(base) : 0.0f;
             pt.normal_y = 0.0f;
             pt.normal_z = 0.0f;
 
@@ -200,6 +213,16 @@ private:
         sensor_msgs::msg::PointCloud2 out_msg;
         pcl::toROSMsg(out_cloud, out_msg);
         out_msg.header = msg->header;
+        // curvature is relative to min_t, so the header must BE min_t whenever the per-point times are
+        // absolute (within 1 s of the header): rslidar_sdk's default ts_first_point=false stamps the
+        // header at the LAST point, one scan period after the first.
+        if (has_time)
+        {
+            const double t0 = min_t * eff_scale;
+            const double hdr = rclcpp::Time(msg->header.stamp).seconds();
+            if (std::fabs(t0 - hdr) < 1.0)
+                out_msg.header.stamp = rclcpp::Time(static_cast<int64_t>(std::llround(t0 * 1e9)));
+        }
         if (!target_frame_.empty())
         {
             out_msg.header.frame_id = target_frame_;

@@ -55,16 +55,12 @@ def generate_launch_description():
     map_name = LaunchConfiguration('map')
     data_dir = LaunchConfiguration('data_dir')
 
-    # body→base_link 静态外参(默认全 0；迁移到雷达/IMU 非原点安装的机器人时按需传入)
-    declare_body_ext_args = []
-    for _name in ['body_base_x', 'body_base_y', 'body_base_z', 'body_base_roll', 'body_base_pitch', 'body_base_yaw']:
-        declare_body_ext_args.append(DeclareLaunchArgument(_name, default_value='0.0'))
-    body_base_x = LaunchConfiguration('body_base_x')
-    body_base_y = LaunchConfiguration('body_base_y')
-    body_base_z = LaunchConfiguration('body_base_z')
-    body_base_roll = LaunchConfiguration('body_base_roll')
-    body_base_pitch = LaunchConfiguration('body_base_pitch')
-    body_base_yaw = LaunchConfiguration('body_base_yaw')
+    # 传感器安装外参(相对 base_link，须实测；见 docs/calibration_procedure.md)。
+    # body(=FastLIO2 估计的 IMU 系) -> base_link 由 rsp.launch.py 按 imu_* 取逆后作为 URDF 根关节发布，
+    # 不再另起 static_transform_publisher(否则 body 有两个父节点、与 base_link 成环)。
+    mount_names = [p + a for p in ('imu_', 'lidar_', 'cam_') for a in ('x', 'y', 'z', 'roll', 'pitch', 'yaw')]
+    cam_defaults = {'cam_roll': '-1.5707963', 'cam_yaw': '-1.5707963'}
+    declare_mount_args = [DeclareLaunchArgument(n, default_value=cam_defaults.get(n, '0.0')) for n in mount_names]
 
     # 2. 传感器驱动与里程计
     lidar_vendor = LaunchConfiguration('lidar_vendor', default='robosense')
@@ -72,21 +68,8 @@ def generate_launch_description():
     is_robosense = PythonExpression(["'", lidar_vendor, "' == 'robosense'"])
     is_livox = PythonExpression(["'", lidar_vendor, "' == 'livox'"])
 
-    ## RoboSense点云适配节点
-    rs_adapter_node = Node(
-        package='rs_to_fastlio',
-        executable='rs_to_fastlio_node',
-        name='rs_to_fastlio_node',
-        output='screen',
-        condition=IfCondition(is_robosense),
-        parameters=[{
-            'input_topic': '/rslidar_points',
-            'output_topic': '/rslidar_points_adapted',
-            'target_frame': 'lidar_link',
-            'min_range': 0.3,
-            'max_range': 50.0
-        }]
-    )
+    ## RoboSense: lio_node 直接订阅 rslidar_sdk 的 XYZIRT 点云(airy.yaml: lidar_topic /rslidar_points,
+    ## pcl2_time_field timestamp)。rs_to_fastlio 适配节点的输出此前无人订阅，已不再启动。
 
     ## Livox驱动节点
     livox_driver = Node(
@@ -102,7 +85,8 @@ def generate_launch_description():
     rsp_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare('quadruped_description'), 'launch', 'rsp.launch.py'])
-        )
+        ),
+        launch_arguments=[(n, LaunchConfiguration(n)) for n in mount_names] + [('use_sim_time', use_sim_time)],
     )
 
     ## fastlio2建图节点
@@ -178,23 +162,6 @@ def generate_launch_description():
             'params_file': nav2_params_file
         }.items(),
     )
-    ## 静态TF转换节点（body→base_link），外参可配置
-    # 使用 Humble 支持的具名参数（--x/--y/--z/--roll/--pitch/--yaw/--frame-id/--child-frame-id）。
-    # 位置参数形式是 `x y z yaw pitch roll parent child`：旧写法按 `x y z yaw roll pitch` 传入，
-    # 把 body_base_roll 放进了 pitch 槽、body_base_pitch 放进了 roll 槽。默认全 0 时不可见，
-    # 一旦传入非零安装倾角就会发布错误（roll/pitch 互换）的 body→base_link 旋转。
-    # 具名参数与顺序无关，从根上消除该歧义。
-    static_tf_node = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="body_to_base_link_tf",
-        arguments=[
-            "--x", body_base_x, "--y", body_base_y, "--z", body_base_z,
-            "--roll", body_base_roll, "--pitch", body_base_pitch, "--yaw", body_base_yaw,
-            "--frame-id", "body", "--child-frame-id", "base_link",
-        ],
-        output="screen"
-    )
     ## 位姿输出节点
     ## 位姿输出节点（配置预测模式满足 <= 5cm 指标）
     map_pose_node = Node(
@@ -203,8 +170,22 @@ def generate_launch_description():
         name="map_pose_publisher",
         output="screen",
         parameters=[{
+            # lio_node runs in namespace "mapping": its odometry is /mapping/lio_odom (the node's
+            # default /fastlio2/lio_odom has no publisher here, which left this node silent)
+            "odom_topic": "/mapping/lio_odom",
             "current_pose_mode": True,
-            "predict_current_pose": True
+            "predict_current_pose": True,
+            # Propagate the newest LIO state to "now" with the measured IMU samples instead of the
+            # constant-velocity model.  Gazebo (docs/validation/gazebo_regression_20261018.md):
+            # 1.0 m/s 3D RMSE 1.3 cm / 98% post-lock output vs 9.8 cm for constant velocity, whose
+            # 0.12 s window cannot cover one 10 Hz scan period + LIO latency.
+            "imu_predict": LaunchConfiguration('imu_predict'),
+            "imu_topic": "/imu/data",  # the IMU lio_node integrates (airy.yaml imu_topic)
+            "imu_acc_scale": 1.0,       # must equal airy.yaml imu_acc_scale
+            "max_imu_prediction_s": 0.25,
+            # constant-velocity bound, used only when imu_predict is false; see docs/tuning_guide.md
+            "max_prediction_s": LaunchConfiguration('max_prediction_s'),
+            "use_sim_time": use_sim_time,
         }]
     )
     ## 速度平滑节点
@@ -265,16 +246,18 @@ def generate_launch_description():
         declare_data_dir_arg,
         declare_map_arg,
         declare_use_sim_time_arg,
-        *declare_body_ext_args,
+        DeclareLaunchArgument('imu_predict', default_value='true',
+                              description='robot_pose: propagate to the query time with the IMU (true) or constant velocity (false)'),
+        DeclareLaunchArgument('max_prediction_s', default_value='0.12',
+                              description='robot_pose predict-mode extrapolation bound [s] (see tuning_guide.md)'),
+        *declare_mount_args,
         rsp_launch,
-        rs_adapter_node,
         livox_driver,
         lio_node,
         multi_goal_manager_node,
         localizer_node,
         colored_pcd_display_node,
         nav2_bringup_launch,
-        static_tf_node,
         map_pose_node,
         obstacle_avoidance_node,
         cmd_smooth_node,

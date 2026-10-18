@@ -1054,18 +1054,25 @@ def main(argv=None):
         return 2
     avail_full = avail_out["age_contract_fraction_full_span"] or 0.0
     mode = args.consumer_mode or (service.get("consumer_mode") if service else None)
-    if mode == "predict" and service and service.get("verdict") == "PASS" and consumer_ate is not None and consumer_ate <= args.threshold_m:
+    # predict mode passes on accuracy only if it ALSO meets the full-span availability gate that
+    # every other mode is held to (test_scenarios.md: >= min_availability over the complete GT
+    # support).  It used to return PASS here before that gate was evaluated, so a run with 88%
+    # full-span availability was reported as PASS.
+    if (mode == "predict" and service and service.get("verdict") == "PASS" and consumer_ate is not None
+            and consumer_ate <= args.threshold_m and avail_full >= args.min_availability):
         verdict["verdict"] = "PASS"
         verdict["reason"] = ("predicted-position service PASSED: real consumer ATE %.4f m <= %.2f m, "
-                             "post-lock availability %.4f >= %.2f"
+                             "post-lock availability %.4f >= %.2f, full-span availability %.4f >= %.2f"
                              % (consumer_ate, args.threshold_m,
                                 service.get("post_lock_output_fraction") or 0.0,
-                                float(args.min_post_lock_availability)))
+                                float(args.min_post_lock_availability),
+                                avail_full, args.min_availability))
         sc.write_json(verdict_path, verdict)
-        print("✅ PASS: 预测服务达成，真实消费者 ATE %.4fm ≤ %.2fm，后锁可用率 %.2f%% ≥ %.0f%%"
+        print("✅ PASS: 预测服务达成，真实消费者 ATE %.4fm ≤ %.2fm，后锁可用率 %.2f%% ≥ %.0f%%，全段可用率 %.2f%% ≥ %.0f%%"
               % (consumer_ate, args.threshold_m,
                  (service.get("post_lock_output_fraction") or 0.0) * 100.0,
-                 float(args.min_post_lock_availability) * 100.0))
+                 float(args.min_post_lock_availability) * 100.0,
+                 avail_full * 100.0, args.min_availability * 100.0))
         return 0
 
     if avail_full < args.min_availability:

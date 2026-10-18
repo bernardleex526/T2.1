@@ -1,20 +1,35 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="quadruped_robot">
 
-  <!-- Arguments for sensor mounting transforms -->
-  <xacro:property name="imu_x" value="-0.0110"/>
-  <xacro:property name="imu_y" value="-0.02329"/>
-  <xacro:property name="imu_z" value="0.04412"/>
-  <xacro:property name="imu_roll" value="0.0"/>
-  <xacro:property name="imu_pitch" value="0.0"/>
-  <xacro:property name="imu_yaw" value="0.0"/>
+  <!-- Sensor mounts relative to base_link, MEASURED on the robot (calibration_procedure.md).
+       The defaults are placeholders, not a calibration.  imu_* is the IMU that FastLIO2 integrates;
+       ext_il in the lio yaml must equal T_imu<-lidar derived from these two mounts. -->
+  <xacro:arg name="imu_x" default="0.0"/>
+  <xacro:arg name="imu_y" default="0.0"/>
+  <xacro:arg name="imu_z" default="0.0"/>
+  <xacro:arg name="imu_roll" default="0.0"/>
+  <xacro:arg name="imu_pitch" default="0.0"/>
+  <xacro:arg name="imu_yaw" default="0.0"/>
+  <xacro:arg name="lidar_x" default="0.0"/>
+  <xacro:arg name="lidar_y" default="0.0"/>
+  <xacro:arg name="lidar_z" default="0.0"/>
+  <xacro:arg name="lidar_roll" default="0.0"/>
+  <xacro:arg name="lidar_pitch" default="0.0"/>
+  <xacro:arg name="lidar_yaw" default="0.0"/>
+  <!-- body -> base_link = inverse of the IMU mount; computed by rsp.launch.py from the imu_* args -->
+  <xacro:arg name="body_to_base_xyz" default="0 0 0"/>
+  <xacro:arg name="body_to_base_rpy" default="0 0 0"/>
 
-  <xacro:property name="lidar_x" value="0.0"/>
-  <xacro:property name="lidar_y" value="0.0"/>
-  <xacro:property name="lidar_z" value="0.0"/>
-  <xacro:property name="lidar_roll" value="0.0"/>
-  <xacro:property name="lidar_pitch" value="0.0"/>
-  <xacro:property name="lidar_yaw" value="0.0"/>
+  <!-- TF tree root.  `body` is the frame FastLIO2 estimates (the IMU, odom -> body published by
+       lio_node), so it is the root here: odom -> body -> base_link -> sensors gives every frame
+       exactly ONE parent.  (A base_link -> body joint plus a body -> base_link static TF, as before,
+       made body a two-parent node and closed a loop.) -->
+  <link name="body"/>
+  <joint name="body_to_base_joint" type="fixed">
+    <parent link="body"/>
+    <child link="base_link"/>
+    <origin xyz="$(arg body_to_base_xyz)" rpy="$(arg body_to_base_rpy)"/>
+  </joint>
 
   <!-- Base link (REP-105 body center) -->
   <link name="base_link">
@@ -28,14 +43,6 @@
       </material>
     </visual>
   </link>
-
-  <!-- Legacy body frame (coincident with base_link) -->
-  <link name="body"/>
-  <joint name="base_to_body_joint" type="fixed">
-    <parent link="base_link"/>
-    <child link="body"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
 
   <!-- IMU link -->
   <link name="imu_link">
@@ -52,7 +59,7 @@
   <joint name="base_to_imu_joint" type="fixed">
     <parent link="base_link"/>
     <child link="imu_link"/>
-    <origin xyz="${imu_x} ${imu_y} ${imu_z}" rpy="${imu_roll} ${imu_pitch} ${imu_yaw}"/>
+    <origin xyz="$(arg imu_x) $(arg imu_y) $(arg imu_z)" rpy="$(arg imu_roll) $(arg imu_pitch) $(arg imu_yaw)"/>
   </joint>
 
   <!-- RoboSense Airy / Odin1 LiDAR link -->
@@ -70,15 +77,23 @@
   <joint name="base_to_lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="lidar_link"/>
-    <origin xyz="${lidar_x} ${lidar_y} ${lidar_z}" rpy="${lidar_roll} ${lidar_pitch} ${lidar_yaw}"/>
+    <origin xyz="$(arg lidar_x) $(arg lidar_y) $(arg lidar_z)" rpy="$(arg lidar_roll) $(arg lidar_pitch) $(arg lidar_yaw)"/>
   </joint>
 
-  <!-- Camera link (for FastLIVO2 upgrade) -->
+  <!-- Camera link (FastLIVO2 upgrade).  camera_link is the OPTICAL frame (z forward, x right,
+       y down), so a forward-looking camera has rpy = (-pi/2, 0, -pi/2) relative to base_link.
+       Must agree with ext_lc (lidar -> camera) in the lio yaml; placeholder until calibrated. -->
+  <xacro:arg name="cam_x" default="0.0"/>
+  <xacro:arg name="cam_y" default="0.0"/>
+  <xacro:arg name="cam_z" default="0.0"/>
+  <xacro:arg name="cam_roll" default="-1.5707963"/>
+  <xacro:arg name="cam_pitch" default="0.0"/>
+  <xacro:arg name="cam_yaw" default="-1.5707963"/>
   <link name="camera_link"/>
   <joint name="base_to_camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="camera_link"/>
-    <origin xyz="0.055 -0.024 -0.036" rpy="0 0 0"/>
+    <origin xyz="$(arg cam_x) $(arg cam_y) $(arg cam_z)" rpy="$(arg cam_roll) $(arg cam_pitch) $(arg cam_yaw)"/>
   </joint>
 
 </robot>

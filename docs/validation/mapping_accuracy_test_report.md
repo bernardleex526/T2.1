@@ -6,6 +6,18 @@
 - **软件基准**: ROS 2 Humble Hawksbill, PCL 1.12, Eigen 3.4, Sophus 1.22.9102, GTSAM 4.2.0
 - **测试执行结果**: **ALL PASS** (T1 建图精度 PASS / T2 建图速度 PASS / T3 定位精度 PASS)
 
+> **更正（2026-10-18）：本报告不能作为对任务书的验收结论。**
+> - 全部结果来自**纯 Python 合成数据回放**（numpy 光线投射生成的 rosbag2），不是真实 Airy / Orin NX / 四足数据，
+>   也不是 Gazebo 物理仿真；这与 `hardware_readiness_20261007.md` 的"不应声称已在目标平台验证"一致。
+> - "建图速度 0.508 m/s"是合成轨迹设定的速度（`speed_mps: 0.5` 加振动分量），不是测出来的能力。
+> - T3 PASS 来自 predict 模式的一个判定分支，该分支跳过了全段可用率 ≥95% 门（实测 84.75%）；
+>   这个分支已修正（`simulation/scripts/test_t3_localization.py`）。
+> - §四列出的 18.5 / 37 Hz 陷波**没有实测来源**，已从配置中移除；该节的"效果评估"没有对应的测量。
+> - 审查中发现、并已在 `fix/t21-review-findings` 修正的缺陷，原交付状态下会使下列结论不成立：
+>   `airy.yaml` 0.05 m 体素导致 lio_node 段错误；生产 launch 下 `/robot_pose_map` 无输出；
+>   定位器 map→odom 航向单调漂移。
+> - 修正后的 Gazebo 回归结果见 `docs/validation/gazebo_regression_20261018.md`。
+
 ---
 
 ## 一、指标要求与测试摘要

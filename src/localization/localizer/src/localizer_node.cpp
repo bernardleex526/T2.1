@@ -151,6 +151,17 @@ public:
         m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
         m_localizer = std::make_shared<ICPLocalizer>(m_localizer_config);
+        // Load the prior map at startup.  It used to be loaded only inside the relocalize service,
+        // so an unattended start never produced a single map->odom (every align() failed on an
+        // empty target).  With the map loaded, a robot that starts at the map origin locks on its
+        // own (seed = identity) and qualifies through the gate's recovery_accepts streak; any other
+        // start pose still needs one /localizer/relocalize (or RViz /initialpose) call.
+        if (std::filesystem::exists(m_config.pcd_path) && m_localizer->loadMap(m_config.pcd_path))
+            RCLCPP_INFO(this->get_logger(), "prior map loaded at startup: %s (%zu refine points)",
+                        m_config.pcd_path.c_str(), m_localizer->refineMap()->size());
+        else
+            RCLCPP_WARN(this->get_logger(), "prior map NOT loaded at startup (%s): waiting for a relocalize request",
+                        m_config.pcd_path.c_str());
 
         m_reloc_srv = this->create_service<interface::srv::Relocalize>("relocalize", std::bind(&LocalizerNode::relocCB, this, std::placeholders::_1, std::placeholders::_2));
 
@@ -403,7 +414,8 @@ public:
         }
         ++m_state.updates;
 
-        M3D map_body_r = initial_guess.block<3, 3>(0, 0).cast<double>();
+        // the ICP result is a float matrix: project it back onto SO(3) before it becomes a candidate
+        const M3D map_body_r = orthonormalized(initial_guess.block<3, 3>(0, 0).cast<double>());
         V3D map_body_t = initial_guess.block<3, 1>(0, 3).cast<double>();
         M3D cand_offset_r = map_body_r * frame_local_r.transpose();
         V3D cand_offset_t = -map_body_r * frame_local_r.transpose() * frame_local_t + map_body_t;
@@ -590,7 +602,8 @@ public:
         {
             std::lock_guard<std::mutex> lock(m_state.service_mutex);
             m_state.initial_guess.setIdentity();
-            m_state.initial_guess.block<3, 3>(0, 0) = (yaw_angle * roll_angle * pitch_angle).toRotationMatrix().cast<float>();
+            // ZYX (R = Rz(yaw) Ry(pitch) Rx(roll)), the convention initialPoseCB decomposes with tf2 getRPY
+            m_state.initial_guess.block<3, 3>(0, 0) = (yaw_angle * pitch_angle * roll_angle).toRotationMatrix().cast<float>();
             m_state.initial_guess.block<3, 1>(0, 3) = V3F(x, y, z);
             m_state.service_received = true;
             // Until the next adopted candidate the lock is NOT valid: the operator is re-seeding

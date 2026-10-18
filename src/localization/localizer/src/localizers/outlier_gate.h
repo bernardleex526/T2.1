@@ -52,6 +52,19 @@
 using M3D = Eigen::Matrix3d;
 using V3D = Eigen::Vector3d;
 
+// Nearest proper rotation of a (float-ICP-derived, slightly non-orthonormal) matrix.  Every rotation
+// stored by the gate goes through this: the ICP is seeded from the previous result, so its
+// rounding compounds across updates (measured: |R R^T - I| grows from 6e-6 to 5e-4 over 130
+// updates), and slerping / quaternion-converting a non-orthonormal matrix every update made the
+// published map<-odom yaw creep monotonically (+0.7 deg over 100 s at 10 Hz).
+inline M3D orthonormalized(const M3D &r)
+{
+    Eigen::JacobiSVD<M3D> svd(r, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    M3D d = M3D::Identity();
+    d(2, 2) = (svd.matrixU() * svd.matrixV().transpose()).determinant() < 0.0 ? -1.0 : 1.0;
+    return svd.matrixU() * d * svd.matrixV().transpose();
+}
+
 struct OffsetGateConfig
 {
     double max_translation_m = 0.04;   // body-position innovation allowed per update
@@ -98,8 +111,9 @@ public:
     // UNATTENDED first lock does NOT go through here (see update(): it must not publish, and it
     // must earn its validity).  Does NOT make the lock valid by itself: update() does that for a
     // service_request, and the completed recovery edge does it for everything else.
-    void reset(const M3D &r, const V3D &t)
+    void reset(const M3D &r_in, const V3D &t)
     {
+        const M3D r = orthonormalized(r_in);
         m_engaged = true;
         m_raw_r = r;
         m_raw_t = t;
@@ -146,9 +160,10 @@ public:
     // accepted -> gated, keeps valid; rejected x max_consecutive_rejects -> lost (NOT valid, but
     // still gating on the re-seeded reference); then recovery_accepts consecutive accepted
     // updates -> recovered (valid, published transform released).
-    OffsetGateOutcome update(const M3D &cand_r, const V3D &cand_t, const V3D &body_t,
+    OffsetGateOutcome update(const M3D &cand_r_in, const V3D &cand_t, const V3D &body_t,
                              bool service_request = false)
     {
+        const M3D cand_r = orthonormalized(cand_r_in);
         OffsetGateOutcome out;
         if (!m_engaged || service_request)
         {
@@ -250,8 +265,9 @@ private:
         }
         const double a = m_cfg.ema_alpha;
         m_ema_t = (1.0 - a) * m_ema_t + a * t;
-        m_ema_r = Eigen::Quaterniond(m_ema_r)
-                      .slerp(a, Eigen::Quaterniond(r))
+        m_ema_r = Eigen::Quaterniond(m_ema_r).normalized()
+                      .slerp(a, Eigen::Quaterniond(r).normalized())
+                      .normalized()
                       .toRotationMatrix();
     }
 

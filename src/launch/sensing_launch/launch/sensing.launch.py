@@ -116,21 +116,10 @@ def generate_launch_description():
     is_robosense = PythonExpression(["'", lidar_vendor, "' == 'robosense'"])
     is_livox = PythonExpression(["'", lidar_vendor, "' == 'livox'"])
 
-    # 1. RoboSense 点云转换适配节点
-    rs_adapter_node = Node(
-        package='rs_to_fastlio',
-        executable='rs_to_fastlio_node',
-        name='rs_to_fastlio_node',
-        output='screen',
-        condition=IfCondition(is_robosense),
-        parameters=[{
-            'input_topic': '/rslidar_points',
-            'output_topic': '/rslidar_points_adapted',
-            'target_frame': 'lidar_link',
-            'min_range': 0.3,
-            'max_range': 50.0
-        }]
-    )
+    # 1. RoboSense: lio_node 直接订阅 rslidar_sdk 的 XYZIRT 点云(见 airy.yaml)，不再启动输出无人订阅的
+    #    rs_to_fastlio 适配节点。
+    mount_names = [p + a for p in ('imu_', 'lidar_', 'cam_') for a in ('x', 'y', 'z', 'roll', 'pitch', 'yaw')]
+    cam_defaults = {'cam_roll': '-1.5707963', 'cam_yaw': '-1.5707963'}
 
     # 2. Livox mid360驱动
     livox_driver = Node(
@@ -142,11 +131,12 @@ def generate_launch_description():
         parameters=livox_ros2_params
     )
 
-    # 3. 四足机器人 REP-105 TF 树发布 (base_link -> imu_link / lidar_link)
+    # 3. TF 树: odom -(lio)-> body(IMU) -(URDF, 实测安装外参取逆)-> base_link -> imu/lidar/camera
     rsp_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare('quadruped_description'), 'launch', 'rsp.launch.py'])
-        )
+        ),
+        launch_arguments=[(n, LaunchConfiguration(n)) for n in mount_names],
     )
 
     # 4. 建图节点配置路径
@@ -193,8 +183,8 @@ def generate_launch_description():
                               description='LiDAR vendor: robosense or livox'),
         DeclareLaunchArgument('config_file', default_value='airy.yaml',
                               description='FastLIO2 config file name (e.g. airy.yaml, odin1.yaml, lio.yaml)'),
+        *[DeclareLaunchArgument(n, default_value=cam_defaults.get(n, '0.0')) for n in mount_names],
         rsp_launch,
-        rs_adapter_node,
         livox_driver,
         lio_node,
         pgo_node,

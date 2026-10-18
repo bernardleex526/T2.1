@@ -27,11 +27,17 @@ void IMUProcessor::configureAccLpf()
 {
     if (!m_config.imu_lpf_enable)
         return;
-    m_acc_lpf.setup(m_config.imu_lpf_cutoff_hz, m_config.gait_filter_sample_rate_hz);
+    m_acc_lpf.setup(m_config.imu_lpf_cutoff_hz, m_config.imu_lpf_sample_rate_hz);
+    m_gyro_lpf.setup(m_config.imu_lpf_cutoff_hz, m_config.imu_lpf_sample_rate_hz);
     if (m_acc_lpf.initialized)
     {
-        RCLCPP_INFO(m_logger, "Butterworth 2nd-order Accel LPF ACTIVE: fc=%.1f Hz, fs=%.1f Hz",
-                    m_config.imu_lpf_cutoff_hz, m_config.gait_filter_sample_rate_hz);
+        RCLCPP_INFO(m_logger, "Butterworth 2nd-order IMU LPF ACTIVE on accel AND gyro: fc=%.1f Hz, fs=%.1f Hz",
+                    m_config.imu_lpf_cutoff_hz, m_config.imu_lpf_sample_rate_hz);
+    }
+    else
+    {
+        RCLCPP_WARN(m_logger, "IMU LPF requested but inert: need 0 < fc (%.1f) < fs/2 (fs=%.1f Hz)",
+                    m_config.imu_lpf_cutoff_hz, m_config.imu_lpf_sample_rate_hz);
     }
 }
 
@@ -99,6 +105,7 @@ void IMUProcessor::ingestImu(const Vec<IMUData> &samples)
         if (m_acc_lpf.initialized)
         {
             filtered.acc = m_acc_lpf.filter(s.acc);
+            filtered.gyro = m_gyro_lpf.filter(s.gyro);
         }
         if (m_gait_filter.valid())
         {

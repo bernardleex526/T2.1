@@ -141,6 +141,7 @@ def _compose(context, *args, **kwargs):
             name="map_pose_publisher",
             output="screen",
             parameters=[{
+                "odom_topic": "/fastlio2/lio_odom",  # this sim runs lio_node in namespace fastlio2
                 "current_pose_mode": current_pose_mode,
                 "predict_current_pose": predict_current_pose,
                 "use_sim_time": True,

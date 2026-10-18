@@ -30,12 +30,21 @@ struct ButterworthLPF
         a2 = (1.0 - std::sqrt(2.0) * k + k2) * norm;
         s1.setZero();
         s2.setZero();
+        primed = false;
         initialized = true;
     }
 
     V3D filter(const V3D &in)
     {
         if (!initialized) return in;
+        if (!primed)
+        {
+            // Start in the DC steady state of the first sample: from zero state the output would
+            // ramp up from 0 m/s^2 and the static IMU-init window would see a fake gravity transient.
+            s1 = (1.0 - b0) * in;
+            s2 = (b2 - a2) * in;
+            primed = true;
+        }
         V3D out = b0 * in + s1;
         s1 = b1 * in - a1 * out + s2;
         s2 = b2 * in - a2 * out;
@@ -46,7 +55,9 @@ struct ButterworthLPF
     {
         s1.setZero();
         s2.setZero();
+        primed = false;
     }
+    bool primed = false;
 };
 
 class IMUProcessor
@@ -65,12 +76,15 @@ public:
     // message, buffer flush) that sequence has ended and the stale state would
     // ring into the new one.  No-op when the gait filter is disabled.
     void resetGaitFilter() { m_gait_filter.reset(); }
-    void resetAccLpf() { m_acc_lpf.reset(); }
+    void resetAccLpf() { m_acc_lpf.reset(); m_gyro_lpf.reset(); }
 
     // True once a usable notch cascade is installed (config opted in AND the
     // frequencies survived validation).  Exposed for the startup log and for
     // tests; false means the node behaves exactly as before the feature.
     bool gaitFilterActive() const { return m_gait_filter.valid(); }
+
+    // Bias-corrected body (IMU) angular rate of the last propagated sample [rad/s].
+    const V3D &lastGyro() const { return m_last_gyro; }
 
 private:
     Config m_config;
@@ -91,6 +105,7 @@ private:
     // pass - filtering in both initialize() and undistort() would run the same sample twice.
     gait::GaitNotchFilter m_gait_filter;
     ButterworthLPF m_acc_lpf;
+    ButterworthLPF m_gyro_lpf; // same coefficients as m_acc_lpf: equal group delay keeps accel/gyro aligned
     void configureAccLpf();
 
     // Configures the notch cascade from m_config and logs the verdict.  Called once from the

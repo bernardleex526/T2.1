@@ -1,10 +1,14 @@
 #include <mutex>
+#include <atomic>
 #include <vector>
 #include <queue>
+#include <deque>
 #include <memory>
 #include <iostream>
 #include <chrono>
 #include <filesystem>
+#include <cmath>
+#include <limits>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -45,10 +49,15 @@ struct NodeConfig
     // 0(默认) = 取 i % lidar_filter_num == 0，与上游 FAST-LIO2 一致、行为不变；实验开关，
     // 未验证，只有 opt-in 的 lio_c2_experimental.yaml 会设置它。
     int pcl2_filter_phase = 0;
-    // 腿式里程计线速度观测
+    // 腿式/轮式里程计线速度观测 (nav_msgs/Odometry 的 twist.linear，表达在其 child frame = base_link)
     bool use_leg_odom = false;
     std::string leg_odom_topic = "/dog/leg_odom";
     double leg_odom_cov = 0.01;
+    // base_link 在 IMU(body) 系下的位姿 T_imu<-base：v_imu = R_ib*v_base + w_imu x t_ib(杆臂)。
+    // 与 quadruped_description 的 imu_* 安装参数互逆；默认单位阵(仅当 IMU 与 base_link 重合时正确)。
+    M3D leg_odom_r_ib = M3D::Identity();
+    V3D leg_odom_t_ib = V3D::Zero();
+    double leg_odom_max_age_s = 0.05;   // 只采用与扫描末状态时刻相差不超过该值的观测
 };
 
 struct StateData
@@ -230,6 +239,13 @@ private:
             if (config["use_leg_odom"]) m_node_config.use_leg_odom = config["use_leg_odom"].as<bool>();
             if (config["leg_odom_topic"]) m_node_config.leg_odom_topic = config["leg_odom_topic"].as<std::string>();
             if (config["leg_odom_cov"]) m_node_config.leg_odom_cov = config["leg_odom_cov"].as<double>();
+            if (config["leg_odom_max_age_s"]) m_node_config.leg_odom_max_age_s = config["leg_odom_max_age_s"].as<double>();
+            if (config["leg_odom_ext_ib"] && config["leg_odom_ext_ib"].IsSequence() && config["leg_odom_ext_ib"].size() >= 7)
+            {
+                const auto e = config["leg_odom_ext_ib"].as<std::vector<double>>();  // x y z qx qy qz qw
+                m_node_config.leg_odom_t_ib = V3D(e[0], e[1], e[2]);
+                m_node_config.leg_odom_r_ib = Eigen::Quaterniond(e[6], e[3], e[4], e[5]).normalized().toRotationMatrix();
+            }
 
             // MapBuilder配置
             if (config["lidar_filter_num"]) m_builder_config.lidar_filter_num = config["lidar_filter_num"].as<int>();
@@ -270,6 +286,7 @@ private:
             if (config["point_quality_thresh"]) m_builder_config.point_quality_thresh = config["point_quality_thresh"].as<double>();
             if (config["imu_lpf_enable"]) m_builder_config.imu_lpf_enable = config["imu_lpf_enable"].as<bool>();
             if (config["imu_lpf_cutoff_hz"]) m_builder_config.imu_lpf_cutoff_hz = config["imu_lpf_cutoff_hz"].as<double>();
+            if (config["imu_lpf_sample_rate_hz"]) m_builder_config.imu_lpf_sample_rate_hz = config["imu_lpf_sample_rate_hz"].as<double>();
             if (config["imu_saturation_detect"]) m_builder_config.imu_saturation_detect = config["imu_saturation_detect"].as<bool>();
             if (config["imu_saturation_limit_mps2"]) m_builder_config.imu_saturation_limit_mps2 = config["imu_saturation_limit_mps2"].as<double>();
 
@@ -399,6 +416,7 @@ private:
         {
             RCLCPP_WARN(this->get_logger(), "IMU Message is out of order");
             std::deque<IMUData>().swap(m_state_data.imu_buffer);
+            m_imu_discontinuity = true;  // filter thread resets the IMU filter state
         }
         m_state_data.imu_buffer.emplace_back(V3D(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z) * m_builder_config.imu_acc_scale,
                                              V3D(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z),
@@ -423,9 +441,25 @@ private:
     // 通用 PointCloud2 雷达接入(Velodyne / Ouster / RoboSense 等发布 PointCloud2 的雷达)
     void lidarPcl2CB(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
-        CloudType::Ptr cloud = Utils::pcl2_to_PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range, m_node_config.pcl2_time_field, m_node_config.pcl2_time_scale, m_node_config.pcl2_filter_phase);
+        double point_t0 = std::numeric_limits<double>::quiet_NaN();
+        CloudType::Ptr cloud = Utils::pcl2_to_PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range, m_node_config.pcl2_time_field, m_node_config.pcl2_time_scale, m_node_config.pcl2_filter_phase, &point_t0);
         std::lock_guard<std::mutex> lock(m_state_data.lidar_mutex);
         double timestamp = Utils::getSec(msg->header);
+        // Absolute per-point times (e.g. RoboSense XYZIRT `timestamp`, epoch seconds) define the scan
+        // start directly, whatever the driver put in the header (rslidar_sdk's default
+        // ts_first_point=false stamps the LAST point, which would shift the whole scan by one
+        // period).  Relative per-point times (Velodyne `time`, Ouster `t` after scaling) are small
+        // offsets from the header, which then stays the scan start.
+        if (std::isfinite(point_t0) && std::fabs(point_t0 - timestamp) < 1.0)
+        {
+            timestamp = point_t0;
+        }
+        else if (std::isfinite(point_t0) && std::fabs(point_t0) > 1.0)
+        {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "per-point time (%.6f s) is neither a small offset nor within 1 s of the header stamp (%.6f s): check pcl2_time_field / pcl2_time_scale and the lidar clock domain",
+                                 point_t0, timestamp);
+        }
         if (timestamp < m_state_data.last_lidar_time)
         {
             RCLCPP_WARN(this->get_logger(), "Lidar Message is out of order");
@@ -434,20 +468,56 @@ private:
         m_state_data.lidar_buffer.emplace_back(timestamp, cloud);
         m_state_data.last_lidar_time = timestamp;
     }
+    // Buffer only.  The filter state is owned by the timer thread (predict/update/undistort in
+    // timerCB); this callback runs on the reentrant sensor group, so updating m_kf here raced the
+    // IESKF and ran before IMU init (on an unset covariance).  The sample is applied in
+    // applyLegOdometry() on the filter thread, time-aligned to the scan-end state.
     void legOdomCB(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
-        V3D v_body(msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
-        M3D R_cov = M3D::Identity() * m_node_config.leg_odom_cov;
+        LegOdomSample s;
+        s.t = Utils::getSec(msg->header);
+        s.v_base = V3D(msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
+        s.cov = M3D::Identity() * m_node_config.leg_odom_cov;
         if (msg->twist.covariance[0] > 0.0 && msg->twist.covariance[7] > 0.0 && msg->twist.covariance[14] > 0.0)
         {
-            R_cov(0, 0) = msg->twist.covariance[0];
-            R_cov(1, 1) = msg->twist.covariance[7];
-            R_cov(2, 2) = msg->twist.covariance[14];
+            s.cov(0, 0) = msg->twist.covariance[0];
+            s.cov(1, 1) = msg->twist.covariance[7];
+            s.cov(2, 2) = msg->twist.covariance[14];
         }
-        if (m_kf)
+        std::lock_guard<std::mutex> lock(m_leg_mutex);
+        m_leg_buffer.push_back(s);
+        while (m_leg_buffer.size() > 200)
+            m_leg_buffer.pop_front();
+    }
+
+    // Filter thread only (timerCB).  Uses the leg sample nearest to the state time; converts the
+    // base_link velocity to the IMU point with the mounting extrinsic and the w x r lever arm.
+    void applyLegOdometry(double state_time)
+    {
+        LegOdomSample best;
+        bool found = false;
         {
-            m_kf->updateLegVelocity(v_body, R_cov);
+            std::lock_guard<std::mutex> lock(m_leg_mutex);
+            double best_dt = m_node_config.leg_odom_max_age_s;
+            for (const auto &s : m_leg_buffer)
+            {
+                const double dt = std::fabs(s.t - state_time);
+                if (dt <= best_dt)
+                {
+                    best_dt = dt;
+                    best = s;
+                    found = true;
+                }
+            }
+            while (!m_leg_buffer.empty() && m_leg_buffer.front().t < state_time - 1.0)
+                m_leg_buffer.pop_front();
         }
+        if (!found)
+            return;
+        const V3D w_imu = m_builder->lastGyro();  // bias-corrected body rate at the state time
+        const V3D v_imu = m_node_config.leg_odom_r_ib * best.v_base + w_imu.cross(m_node_config.leg_odom_t_ib);
+        const M3D cov = m_node_config.leg_odom_r_ib * best.cov * m_node_config.leg_odom_r_ib.transpose();
+        m_kf->updateLegVelocity(v_imu, cov);
     }
     
     void imageCB(const sensor_msgs::msg::Image::SharedPtr msg)
@@ -661,6 +731,8 @@ private:
             return;
 
         auto t1 = std::chrono::high_resolution_clock::now();
+        if (m_imu_discontinuity.exchange(false))
+            m_builder->resetImuFilters();
         m_builder->process(m_package);
         auto t2 = std::chrono::high_resolution_clock::now();
 
@@ -672,6 +744,9 @@ private:
 
         if (m_builder->status() != BuilderStatus::MAPPING)
             return;
+
+        if (m_node_config.use_leg_odom && m_package.lidar_end)
+            applyLegOdometry(m_package.cloud_end_time);
 
         // Diagnostics every 100 scans: state, extrinsic, biases (one line each).
         {
@@ -833,6 +908,15 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr m_imu_sub;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr m_image_sub;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr m_leg_odom_sub;
+    struct LegOdomSample
+    {
+        double t = 0.0;
+        V3D v_base = V3D::Zero();
+        M3D cov = M3D::Identity();
+    };
+    std::atomic<bool> m_imu_discontinuity{false};
+    std::mutex m_leg_mutex;
+    std::deque<LegOdomSample> m_leg_buffer;
 
     // ROS2发布者
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_body_cloud_pub;

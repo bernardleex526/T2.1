@@ -100,7 +100,7 @@ private:
     size_t m_reject_total = 0;
     size_t m_reject_reported = 0;
     State m_x;
-    M21D m_P;
+    M21D m_P = M21D::Identity(); // defined before IMU init (imu_processor sets the real prior)
     loss_func m_loss_func;
     stop_func m_stop_func;
     M21D m_F;

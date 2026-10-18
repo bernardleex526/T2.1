@@ -6,7 +6,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
-#include <message_filters/sync_policies/approximate_time.h>
+#include <message_filters/sync_policies/exact_time.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -38,7 +38,10 @@ struct NodeConfig
     std::string odom_topic = "/lio/odom";
     std::string map_frame = "map";
     std::string local_frame = "lidar";
-    int processing_threads = 2;  // 处理线程数，根据开发板调整
+    // Exactly one: keyframes must enter the pose graph in time order, and every step of
+    // processCloudWithPose() serializes on m_pgo_mutex anyway, so a second worker only reordered
+    // frames (two threads popping consecutive frames race for the lock) and bought no parallelism.
+    int processing_threads = 1;
     int max_queue_size = 100;    // 最大队列大小
 };
 
@@ -148,7 +151,6 @@ public:
         // 初始化时间同步器
         m_sync = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(
             SyncPolicy(50), m_cloud_sub, m_odom_sub);
-        m_sync->setAgePenalty(0.1);
         m_sync->registerCallback(
             std::bind(&PGONode::syncCB, this, 
                      std::placeholders::_1, std::placeholders::_2));
@@ -191,7 +193,10 @@ public:
     }
 
 private:
-    using SyncPolicy = message_filters::sync_policies::ApproximateTime<
+    // lio_node stamps body_cloud and lio_odom with the SAME scan-end time, so the pair is an exact
+    // match.  ApproximateTime (with an age penalty) is the policy the localizer measured to stop
+    // delivering pairs permanently mid-run; ExactTime cannot wedge on a dropped message.
+    using SyncPolicy = message_filters::sync_policies::ExactTime<
         sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>;
     
     // 配置和状态
@@ -245,8 +250,9 @@ private:
         m_node_config.local_frame = config["local_frame"].as<std::string>();
         
         // 性能相关配置
-        if (config["processing_threads"])
-            m_node_config.processing_threads = config["processing_threads"].as<int>();
+        if (config["processing_threads"] && config["processing_threads"].as<int>() != 1)
+            RCLCPP_WARN(this->get_logger(), "processing_threads=%d ignored: the pose graph needs in-order keyframes, using 1",
+                        config["processing_threads"].as<int>());
         if (config["max_queue_size"])
             m_node_config.max_queue_size = config["max_queue_size"].as<int>();
         
@@ -433,13 +439,17 @@ private:
         cur_time.nanosec = cp.pose.nsec;
         
         bool is_keyframe = false;
+        M3D off_r;
+        V3D off_t;
         {
             std::lock_guard<std::mutex> lock(m_pgo_mutex);
             is_keyframe = m_pgo->addKeyPose(cp);
+            off_r = m_pgo->offsetR();  // snapshot under the lock: smoothAndUpdate() writes these
+            off_t = m_pgo->offsetT();
         }
         
         // 无论是否关键帧，都发布TF
-        sendBroadCastTF(cur_time);
+        sendBroadCastTF(cur_time, off_r, off_t);
         
         if (!is_keyframe)
         {
@@ -458,7 +468,7 @@ private:
             {
                 m_pgo->smoothAndUpdate();
                 // 优化后需要再次发布TF
-                sendBroadCastTF(cur_time);
+                sendBroadCastTF(cur_time, m_pgo->offsetR(), m_pgo->offsetT());
             }
         }
         
@@ -520,7 +530,8 @@ private:
     }
     
     // 广播TF（map -> local_frame） - 恢复原始机制，每次处理都发布
-    void sendBroadCastTF(builtin_interfaces::msg::Time &time)
+    // The offset is passed in: callers read it under m_pgo_mutex (it is written by smoothAndUpdate()).
+    void sendBroadCastTF(builtin_interfaces::msg::Time &time, const M3D &off_r, const V3D &off_t)
     {
         geometry_msgs::msg::TransformStamped transformStamped;
         transformStamped.header.frame_id = m_node_config.map_frame;
@@ -528,8 +539,8 @@ private:
         transformStamped.header.stamp = time;
 
         // 从PGO获取偏移位姿
-        Eigen::Quaterniond q(m_pgo->offsetR());
-        V3D t = m_pgo->offsetT();
+        Eigen::Quaterniond q(off_r);
+        const V3D &t = off_t;
 
         // 填充TF数据
         transformStamped.transform.translation.x = t.x();

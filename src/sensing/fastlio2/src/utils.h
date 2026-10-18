@@ -31,6 +31,10 @@ public:
     // filter_phase 是抽稀相位：取原始索引 i 满足 (i - filter_phase) % filter_num == 0 的点，
     // 即相位 0 与上游 FAST-LIO2 的 `i % point_filter_num == 0` 完全一致(默认值，行为不变)。
     // 相位只影响 PointCloud2 路径；livox2PCL(CustomMsg) 没有该参数(见 C2.3 说明)。
-    static pcl::PointCloud<pcl::PointXYZINormal>::Ptr pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range = 0.5, double max_range = 20.0, const std::string &time_field = "", double time_scale = 1.0, int filter_phase = 0);
+    // curvature 以本帧保留点中最早的时间为零点(点不一定按时间排序)。
+    // scan_t0_sec 非空时写入该最早点的时间(按 time_scale 折算后的秒；无有效时间字段时写 NaN)，
+    // 调用方据此判断帧头时间戳是扫描起点还是终点(RoboSense SDK 默认 ts_first_point=false)。
+    // NaN / Inf 坐标的点被丢弃(驱动 dense_points=false 时无效点为 NaN)。
+    static pcl::PointCloud<pcl::PointXYZINormal>::Ptr pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range = 0.5, double max_range = 20.0, const std::string &time_field = "", double time_scale = 1.0, int filter_phase = 0, double *scan_t0_sec = nullptr);
     static builtin_interfaces::msg::Time getTime(const double& sec);
 };

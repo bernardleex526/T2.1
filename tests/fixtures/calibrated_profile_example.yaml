@@ -14,7 +14,7 @@ lidar_min_range: 0.5
 lidar_max_range: 30.0
 
 pcl2_time_field: "timestamp"
-pcl2_time_scale: 1.0e-9
+pcl2_time_scale: 1.0          # rslidar_sdk XYZIRT `timestamp` is FLOAT64 seconds
 imu_acc_scale: 1.0
 
 scan_resolution: 0.3
@@ -40,7 +40,7 @@ gravity_align: true
 esti_il: false
 point_quality_thresh: 0.9
 
-ext_il: [-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0, 1.0]
+ext_il: [0.05, 0.0, 0.03, 0.0, 0.0, 0.0, 1.0]
 
 lidar_cov_inv: 1000.0
 

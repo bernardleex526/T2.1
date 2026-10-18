@@ -13,6 +13,9 @@
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <deque>
+#include <mutex>
 
 #include "interface/srv/is_valid.hpp"
 
@@ -35,7 +38,7 @@ public:
         // diagnostic status topic.  No extrapolation, no future transform: stale odometry is
         // unavailable.
         this->declare_parameter<bool>("current_pose_mode", false);
-        this->declare_parameter<std::string>("odom_topic", "/fastlio2/lio_odom");
+        this->declare_parameter<std::string>("odom_topic", "/mapping/lio_odom");  // lio_node runs in namespace "mapping"
         this->declare_parameter<double>("odom_age_limit_s", 1.0);
         this->declare_parameter<double>("correction_validity_timeout_s", 1.0);
         this->get_parameter("current_pose_mode", current_pose_mode_);
@@ -55,6 +58,15 @@ public:
         this->get_parameter("max_prediction_s", cfg_.max_prediction_s);
         this->get_parameter("min_odom_interval_s", cfg_.min_odom_interval_s);
         this->get_parameter("max_odom_interval_s", cfg_.max_odom_interval_s);
+        // IMU propagation instead of the constant-velocity model (predict mode only).  The IMU
+        // must be the one FastLIO2 integrates (body = IMU frame) with the same accel scale.
+        this->declare_parameter<bool>("imu_predict", false);
+        this->declare_parameter<std::string>("imu_topic", "/imu/data");
+        this->declare_parameter<double>("imu_acc_scale", 1.0);
+        this->declare_parameter<double>("max_imu_prediction_s", cfg_.max_imu_prediction_s);
+        this->get_parameter("imu_predict", imu_predict_);
+        this->get_parameter("imu_acc_scale", imu_acc_scale_);
+        this->get_parameter("max_imu_prediction_s", cfg_.max_imu_prediction_s);
 
         if (predict_current_pose_ && !current_pose_mode_)
         {
@@ -96,9 +108,22 @@ public:
             }
         }
 
-        // 创建定时器，定期发布位姿
-        timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(50),  // 20Hz
+        if (imu_predict_ && predict_current_pose_)
+        {
+            std::string imu_topic;
+            this->get_parameter("imu_topic", imu_topic);
+            imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+                imu_topic, rclcpp::SensorDataQoS().keep_last(400),
+                [this](const sensor_msgs::msg::Imu::SharedPtr m) { onImu(m); });
+            RCLCPP_INFO(this->get_logger(), "IMU-propagated prediction on %s (max %.3f s)",
+                        imu_topic.c_str(), cfg_.max_imu_prediction_s);
+        }
+        // 20 Hz on the NODE clock: the output rate is part of this node's contract (the query
+        // instants are what predict mode extrapolates to), so under use_sim_time it must tick in
+        // sim time.  A wall timer queried a sim running at 0.4x real time every ~20 ms of sim time,
+        // unevenly against the 10 Hz odometry.
+        timer_ = rclcpp::create_timer(
+            this, this->get_clock(), rclcpp::Duration(std::chrono::milliseconds(50)),
             std::bind(&MapPosePublisher::timer_callback, this));
         
         RCLCPP_INFO(this->get_logger(),
@@ -148,6 +173,37 @@ private:
     // mode keeps AT MOST TWO strictly increasing samples (previous, latest) so the angular rate has
     // a window, ignores repeated stamps, and treats an out-of-order sample / ROS-time jump-back as
     // an epoch change: every cached input is dropped and the node re-waits for a fresh stream.
+    void onImu(const sensor_msgs::msg::Imu::SharedPtr m)
+    {
+        imu_prop::ImuSample smp;
+        smp.t = stampSeconds(m->header.stamp);
+        smp.gyro = Eigen::Vector3d(m->angular_velocity.x, m->angular_velocity.y, m->angular_velocity.z);
+        smp.acc = imu_acc_scale_ * Eigen::Vector3d(m->linear_acceleration.x, m->linear_acceleration.y,
+                                                    m->linear_acceleration.z);
+        if (!std::isfinite(smp.t) || !smp.gyro.allFinite() || !smp.acc.allFinite())
+            return;
+        if (!imu_buf_.empty() && smp.t <= imu_buf_.back().t)
+        {
+            imu_buf_.clear();  // time jump-back / reorder: start a fresh, monotonic window
+            return;
+        }
+        imu_buf_.push_back(smp);
+        while (!imu_buf_.empty() && imu_buf_.front().t < smp.t - 1.0)
+            imu_buf_.pop_front();
+        // gravity magnitude as FastLIO2 adopts it at init: |mean specific force| while static
+        if (!gravity_fixed_)
+        {
+            g_sum_ += smp.acc;
+            if (++g_n_ >= 200)
+            {
+                const double gm = (g_sum_ / g_n_).norm();
+                if (gm > 8.5 && gm < 10.5)
+                    gravity_ = gm;
+                gravity_fixed_ = true;
+            }
+        }
+    }
+
     void onOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
         if (!predict_current_pose_)
@@ -283,7 +339,8 @@ private:
         {
             const auto r = predictCurrentPose(map_odom, *odom_samples_.front(),
                                               *odom_samples_.back(), child_base, query_stamp, cfg_,
-                                              gate_valid, gate_answer_age_);
+                                              gate_valid, gate_answer_age_,
+                                              (imu_predict_ ? &imu_buf_ : nullptr), gravity_);
             corr_age_s = r.correction_age_s;
             odom_age_s = r.odom_age_s;
             correction_valid = r.correction_valid;
@@ -536,6 +593,16 @@ private:
     GateTrust gate_trust_;
     rclcpp::Time gate_last_request_{0, 0, RCL_ROS_TIME};
     rclcpp::TimerBase::SharedPtr timer_;
+    // IMU-propagated prediction (imu_predict).  The IMU callback and the timer share the default
+    // mutually-exclusive callback group of this single-threaded node, so no lock is needed.
+    bool imu_predict_ = false;
+    double imu_acc_scale_ = 1.0;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+    std::deque<imu_prop::ImuSample> imu_buf_;
+    double gravity_ = 9.81;
+    bool gravity_fixed_ = false;
+    Eigen::Vector3d g_sum_ = Eigen::Vector3d::Zero();
+    int g_n_ = 0;
 };
 
 int main(int argc, char** argv)

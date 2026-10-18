@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
@@ -26,6 +27,7 @@ ament_target_dependencies(map_pose_publisher
   rclcpp
   geometry_msgs
   nav_msgs
+  sensor_msgs
   tf2_ros
   tf2_geometry_msgs
   diagnostic_msgs
@@ -62,6 +64,11 @@ if(BUILD_TESTING)
   target_include_directories(test_map_pose_current PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   ament_target_dependencies(test_map_pose_current geometry_msgs nav_msgs)
   target_link_libraries(test_map_pose_current Eigen3::Eigen)
+
+  # IMU-propagated current pose (imu_propagation.hpp) against closed-form motion
+  ament_add_gtest(test_imu_propagation test/test_imu_propagation.cpp)
+  target_include_directories(test_imu_propagation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(test_imu_propagation Eigen3::Eigen)
 
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

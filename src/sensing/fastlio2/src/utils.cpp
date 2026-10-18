@@ -1,5 +1,9 @@
 #include "utils.h"
 #include <sensor_msgs/msg/point_field.hpp>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg, int filter_num, double min_range, double max_range, int max_line)
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZINormal>);
@@ -27,7 +31,7 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driv
     return cloud;
 }
 
-pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range, double max_range, const std::string &time_field, double time_scale, int filter_phase)
+pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range, double max_range, const std::string &time_field, double time_scale, int filter_phase, double *scan_t0_sec)
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZINormal>);
     // 按字段名定位字节偏移
@@ -72,13 +76,11 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
     // indices i with (i - phase) % stride == 0.  phase 0 (the default) is byte-identical to the
     // historical/upstream `i % point_filter_num == 0`.  The offset is folded into [0, stride) so
     // any configured value is well defined; it changes only WHICH points of the same message are
-    // kept (and, because t0 below is the first RETAINED point's time, by how much the per-point
-    // times are rebased).
+    // kept (and, because t0 below is the earliest RETAINED point's time, by how much the
+    // per-point times are rebased).
     const int phase_folded = ((filter_phase % stride_i) + stride_i) % stride_i;
     const std::size_t start = static_cast<std::size_t>(phase_folded);
     cloud->reserve(point_num / stride + 1);
-    double t0_sec = 0.0;
-    bool t0_set = false;
     auto read_float = [&](std::size_t base, int off) -> float
     {
         if (off < 0)
@@ -100,12 +102,17 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
         return 0.0;
     };
 
+    std::vector<double> times;
+    if (off_time >= 0)
+        times.reserve(point_num / stride + 1);
     for (std::size_t i = start; i < point_num; i += stride)
     {
         std::size_t base = i * point_step;
         float x = read_float(base, off_x);
         float y = read_float(base, off_y);
         float z = read_float(base, off_z);
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+            continue;
         if (x * x + y * y + z * z < min_range * min_range || x * x + y * y + z * z > max_range * max_range)
             continue;
         pcl::PointXYZINormal p;
@@ -113,22 +120,27 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
         p.y = y;
         p.z = z;
         p.intensity = read_float(base, off_int);
+        p.curvature = 0.0f; // 无每点时间，扫描内不做运动补偿
         if (off_time >= 0)
         {
-            double t = read_time(base); // 秒
-            if (!t0_set)
-            {
-                t0_sec = t;
-                t0_set = true;
-            }
-            p.curvature = static_cast<float>((t - t0_sec) * 1000.0); // 毫秒，相对扫描起始
-        }
-        else
-        {
-            p.curvature = 0.0f; // 无每点时间，扫描内不做运动补偿
+            const double t = read_time(base); // 秒
+            if (!std::isfinite(t))
+                continue;
+            times.push_back(t);
         }
         cloud->push_back(p);
     }
+    double t0_sec = std::numeric_limits<double>::quiet_NaN();
+    if (!times.empty())
+    {
+        // Rebase in double on the EARLIEST retained point: points need not be stored in time order,
+        // and absolute epoch seconds would lose ~0.1 ms precision if stored as float directly.
+        t0_sec = *std::min_element(times.begin(), times.end());
+        for (std::size_t k = 0; k < cloud->size(); ++k)
+            cloud->points[k].curvature = static_cast<float>((times[k] - t0_sec) * 1000.0); // 毫秒，相对扫描起始
+    }
+    if (scan_t0_sec)
+        *scan_t0_sec = t0_sec;
     return cloud;
 }
 

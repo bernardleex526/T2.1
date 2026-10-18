@@ -151,6 +151,23 @@ if(BUILD_TESTING)
   # SyncPackage holds a cv::Mat, so the test needs OpenCV linked as well as PCL.
   target_link_libraries(test_gait_integration ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
 
+  # A scan whose downsampled size exceeds the old fixed 10k work buffers must be processed
+  # (it used to write past their end and segfault with the shipped airy.yaml 5 cm voxel).
+  ament_add_gtest(test_lidar_processor test/test_lidar_processor.cpp
+                  src/map_builder/ieskf.cpp
+                  src/map_builder/commons.cpp
+                  src/map_builder/ikd_Tree.cpp
+                  src/map_builder/lidar_processor.cpp)
+  target_include_directories(test_lidar_processor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                         ${EIGEN3_INCLUDE_DIRS}
+                                                         ${PCL_INCLUDE_DIRS}
+                                                         ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(test_lidar_processor rclcpp pcl_conversions sensor_msgs)
+  target_link_libraries(test_lidar_processor ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(test_lidar_processor OpenMP::OpenMP_CXX)
+  endif()
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files
