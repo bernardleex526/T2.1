@@ -44,5 +44,7 @@ install(TARGETS
   preprocessor
   DESTINATION lib/${PROJECT_NAME}
 )
+# config/config.yaml is the node's ROS parameter file (universe.launch.py passes it to the node)
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 ament_package()

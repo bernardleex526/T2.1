@@ -29,7 +29,7 @@ bool SimplePGO::isKeyPose(const PoseWithTime &pose)
         return true;
     const KeyPoseWithCloud &last_item = m_key_poses.back();
     double delta_trans = (pose.t - last_item.t_local).norm();
-    double delta_deg = Eigen::Quaterniond(pose.r).angularDistance(Eigen::Quaterniond(last_item.r_local)) * 57.324;
+    double delta_deg = Eigen::Quaterniond(pose.r).angularDistance(Eigen::Quaterniond(last_item.r_local)) * 180.0 / M_PI;
     if (delta_trans > m_config.key_pose_delta_trans || delta_deg > m_config.key_pose_delta_deg)
         return true;
     return false;

@@ -136,7 +136,9 @@ void HBA::getAllFactors(Vec<std::pair<size_t, size_t>> &ids, Vec<Pose> &poses, V
                 pose_fc.t = pose_from.r.transpose() * (pose_to.t - pose_from.t);
                 // std::cout << "level: " << level_idx << " from: " << from << " to: " << to << std::endl;
                 poses.push_back(pose_fc);
-                infos.push_back(blam.H().block<6, 6>(6 * pose_idx, 6 * (pose_idx + 1)));
+                // gauge-consistent information of this relative pose (an off-diagonal Hessian block is
+                // neither symmetric nor positive definite, and has the opposite sign)
+                infos.push_back(blam.relativeInformation(pose_idx, pose_idx + 1));
             }
         }
     }

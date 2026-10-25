@@ -17,6 +17,7 @@
 #include "utils.h"
 #include "map_builder/commons.h"
 #include "map_builder/map_builder.h"
+#include "map_builder/leg_odom.h"
 
 #include <pcl_conversions/pcl_conversions.h>
 #include "tf2_ros/transform_broadcaster.h"
@@ -53,11 +54,13 @@ struct NodeConfig
     bool use_leg_odom = false;
     std::string leg_odom_topic = "/dog/leg_odom";
     double leg_odom_cov = 0.01;
-    // base_link 在 IMU(body) 系下的位姿 T_imu<-base：v_imu = R_ib*v_base + w_imu x t_ib(杆臂)。
+    // base_link 在 IMU(body) 系下的位姿 T_imu<-base：v_imu = R_ib*v_base - w_imu x t_ib(杆臂，见 leg_odom.h)。
     // 与 quadruped_description 的 imu_* 安装参数互逆；默认单位阵(仅当 IMU 与 base_link 重合时正确)。
     M3D leg_odom_r_ib = M3D::Identity();
     V3D leg_odom_t_ib = V3D::Zero();
     double leg_odom_max_age_s = 0.05;   // 只采用与扫描末状态时刻相差不超过该值的观测
+    // lio_path 只保留最近这么多个位姿：整条路径每帧都会被重新发布，不设上限时消息体积随运行时间线性增长
+    int path_max_poses = 20000;
 };
 
 struct StateData
@@ -240,6 +243,7 @@ private:
             if (config["leg_odom_topic"]) m_node_config.leg_odom_topic = config["leg_odom_topic"].as<std::string>();
             if (config["leg_odom_cov"]) m_node_config.leg_odom_cov = config["leg_odom_cov"].as<double>();
             if (config["leg_odom_max_age_s"]) m_node_config.leg_odom_max_age_s = config["leg_odom_max_age_s"].as<double>();
+            if (config["path_max_poses"]) m_node_config.path_max_poses = config["path_max_poses"].as<int>();
             if (config["leg_odom_ext_ib"] && config["leg_odom_ext_ib"].IsSequence() && config["leg_odom_ext_ib"].size() >= 7)
             {
                 const auto e = config["leg_odom_ext_ib"].as<std::vector<double>>();  // x y z qx qy qz qw
@@ -422,11 +426,28 @@ private:
                                              V3D(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z),
                                              timestamp);
         m_state_data.last_imu_time = timestamp;
+        // 正常运行时每帧都会取走缓冲；只有长时间没有激光(未接/断流)才会堆积，此时只保留最近 kImuBufferMaxS
+        while (m_state_data.imu_buffer.front().time < timestamp - kImuBufferMaxS)
+            m_state_data.imu_buffer.pop_front();
     }
-    
+
+    // 一帧里一个有效点都不剩(雷达被遮挡、全部超出量程、驱动发出空包)：不入队。空点云进入
+    // syncPackage/undistort 会对空 vector 取 back()/end()-1，越界读写堆内存后进程崩溃。
+    bool acceptCloud(const CloudType::Ptr &cloud)
+    {
+        if (cloud && !cloud->empty())
+            return true;
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "LiDAR message has no usable point after filtering (range %.2f-%.2f m): scan dropped, IMU keeps propagating",
+                             m_builder_config.lidar_min_range, m_builder_config.lidar_max_range);
+        return false;
+    }
+
     void lidarCB(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg)
     {
         CloudType::Ptr cloud = Utils::livox2PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range, m_builder_config.lidar_max_line);
+        if (!acceptCloud(cloud))
+            return;
         std::lock_guard<std::mutex> lock(m_state_data.lidar_mutex);
         double timestamp = Utils::getSec(msg->header);
         if (timestamp < m_state_data.last_lidar_time)
@@ -443,18 +464,18 @@ private:
     {
         double point_t0 = std::numeric_limits<double>::quiet_NaN();
         CloudType::Ptr cloud = Utils::pcl2_to_PCL(msg, m_builder_config.lidar_filter_num, m_builder_config.lidar_min_range, m_builder_config.lidar_max_range, m_node_config.pcl2_time_field, m_node_config.pcl2_time_scale, m_node_config.pcl2_filter_phase, &point_t0);
+        if (!acceptCloud(cloud))
+            return;
         std::lock_guard<std::mutex> lock(m_state_data.lidar_mutex);
-        double timestamp = Utils::getSec(msg->header);
-        // Absolute per-point times (e.g. RoboSense XYZIRT `timestamp`, epoch seconds) define the scan
-        // start directly, whatever the driver put in the header (rslidar_sdk's default
-        // ts_first_point=false stamps the LAST point, which would shift the whole scan by one
-        // period).  Relative per-point times (Velodyne `time`, Ouster `t` after scaling) are small
-        // offsets from the header, which then stays the scan start.
-        if (std::isfinite(point_t0) && std::fabs(point_t0 - timestamp) < 1.0)
-        {
-            timestamp = point_t0;
-        }
-        else if (std::isfinite(point_t0) && std::fabs(point_t0) > 1.0)
+        // curvature is rebased on the earliest retained point t0, so the scan start must be the time
+        // of t0: absolute per-point times (e.g. RoboSense XYZIRT `timestamp`, epoch seconds) give it
+        // directly, whatever the driver put in the header (rslidar_sdk's default ts_first_point=false
+        // stamps the LAST point); relative per-point times (Ouster `t`, Velodyne `time`) are offsets
+        // from the header, so the start is header + t0 (t0 may be negative when the header is the
+        // scan end).  See Utils::scanStartTime.
+        bool inconsistent = false;
+        double timestamp = Utils::scanStartTime(Utils::getSec(msg->header), point_t0, &inconsistent);
+        if (inconsistent)
         {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
                                  "per-point time (%.6f s) is neither a small offset nor within 1 s of the header stamp (%.6f s): check pcl2_time_field / pcl2_time_scale and the lidar clock domain",
@@ -515,7 +536,7 @@ private:
         if (!found)
             return;
         const V3D w_imu = m_builder->lastGyro();  // bias-corrected body rate at the state time
-        const V3D v_imu = m_node_config.leg_odom_r_ib * best.v_base + w_imu.cross(m_node_config.leg_odom_t_ib);
+        const V3D v_imu = legVelocityAtImu(m_node_config.leg_odom_r_ib, m_node_config.leg_odom_t_ib, best.v_base, w_imu);
         const M3D cov = m_node_config.leg_odom_r_ib * best.cov * m_node_config.leg_odom_r_ib.transpose();
         m_kf->updateLegVelocity(v_imu, cov);
     }
@@ -545,10 +566,17 @@ private:
             if (!m_state_data.lidar_pushed)
             {
                 m_package.cloud = m_state_data.lidar_buffer.front().second;
+                if (!m_package.cloud || m_package.cloud->empty())
+                {
+                    // the callbacks never queue an empty scan; keep the guard so back() below can
+                    // never run on an empty vector whatever the producer does
+                    m_state_data.lidar_buffer.pop_front();
+                    return false;
+                }
                 std::sort(m_package.cloud->points.begin(), m_package.cloud->points.end(), [](PointType &p1, PointType &p2)
                           { return p1.curvature < p2.curvature; });
                 m_package.cloud_start_time = m_state_data.lidar_buffer.front().first;
-                m_package.cloud_end_time = m_package.cloud_start_time + m_package.cloud->points.back().curvature / double(1000.0);
+                m_package.cloud_end_time = m_package.cloud_start_time + m_package.cloud->points.back().curvature / 1000.0;
                 m_package.lidar_end = false;
                 m_state_data.lidar_pushed = true;
             }
@@ -703,6 +731,10 @@ private:
         pose.pose.orientation.z = q.z();
         pose.pose.orientation.w = q.w();
         m_state_data.path.poses.push_back(pose);
+        const std::size_t max_poses = static_cast<std::size_t>(std::max(1, m_node_config.path_max_poses));
+        if (m_state_data.path.poses.size() > max_poses)
+            m_state_data.path.poses.erase(m_state_data.path.poses.begin(),
+                                          m_state_data.path.poses.end() - static_cast<std::ptrdiff_t>(max_poses));
         path_pub->publish(m_state_data.path);
     }
 
@@ -733,6 +765,10 @@ private:
         auto t1 = std::chrono::high_resolution_clock::now();
         if (m_imu_discontinuity.exchange(false))
             m_builder->resetImuFilters();
+        // Status BEFORE this package: only a scan processed in MAPPING went through a scan-to-map
+        // update.  The map-init scan switches the builder to MAPPING without any update, while the
+        // covariance is still the init prior (rotation/position 1, inflated by the init propagation).
+        const BuilderStatus status_before = m_builder->status();
         m_builder->process(m_package);
         auto t2 = std::chrono::high_resolution_clock::now();
 
@@ -745,7 +781,10 @@ private:
         if (m_builder->status() != BuilderStatus::MAPPING)
             return;
 
-        if (m_node_config.use_leg_odom && m_package.lidar_end)
+        // A velocity measurement on that unconverged state moves position/attitude through the
+        // huge p-v / theta-v cross covariances: measured in Gazebo, the first published pose landed
+        // 15-17 cm off the map the scan had just initialised.  Start fusing after the first update.
+        if (m_node_config.use_leg_odom && m_package.lidar_end && status_before == BuilderStatus::MAPPING)
             applyLegOdometry(m_package.cloud_end_time);
 
         // Diagnostics every 100 scans: state, extrinsic, biases (one line each).
@@ -797,7 +836,7 @@ private:
                     std::lock_guard<std::mutex> lock(m_global_cloud_mutex);
                     // 3. 累加当前帧到全局点云（+= 是PCL库重载运算符，直接合并点云）
                     *m_global_colored_cloud += *current_colored_cloud;
-                    RCLCPP_DEBUG(this->get_logger(), "Added %d points to global colored cloud (total: %d)",
+                    RCLCPP_DEBUG(this->get_logger(), "Added %zu points to global colored cloud (total: %zu)",
                                  current_colored_cloud->size(), m_global_colored_cloud->size());
                 }
 
@@ -915,6 +954,9 @@ private:
         M3D cov = M3D::Identity();
     };
     std::atomic<bool> m_imu_discontinuity{false};
+    // IMU history kept while no scan consumes the buffer (lidar absent / stalled) [s]; the static-window
+    // init needs at most imu_init_max_wait_s + imu_init_window_s of it.
+    static constexpr double kImuBufferMaxS = 60.0;
     std::mutex m_leg_mutex;
     std::deque<LegOdomSample> m_leg_buffer;
 

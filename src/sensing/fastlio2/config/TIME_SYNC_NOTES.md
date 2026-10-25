@@ -40,8 +40,11 @@
 
 ## 3. 逐点时间语义（换雷达时必须核实）
 
-- `PointCloud2` 路径下 `curvature = 相对帧首毫秒偏移`，但零点是**首个经距离过滤后保留的点**
+- `PointCloud2` 路径下 `curvature = 相对扫描起点毫秒偏移`，零点是**经距离过滤后保留的点中最早的那个**
   （`utils.cpp` 的 `pcl2_to_PCL`），不一定等于消息帧头：抽稀、距离过滤、驱动字段布局都可能整体平移。
+  扫描起点因此取该最早点的时间（`Utils::scanStartTime`）：绝对时间字段（与帧头相差 < 1 s，如 RoboSense
+  `timestamp`）直接用它；相对帧头的偏移（|t0| < 1 s，如 Ouster `t`、Velodyne `time`）用“帧头 + t0”，
+  t0 可为负（帧头打在末点）；两者都不像时保留帧头并告警（时钟域不一致）。
 - Airy 的逐点时间字段名/量纲**未验证**：`lio_orin_nx.yaml` 中 `pcl2_time_field: ""`，
   即当前**不做扫描内去畸变**（`curvature = 0`）。四足高动态下会表现为点云“锯齿/分层”。
   实测确认字段后再填 `pcl2_time_field` / `pcl2_time_scale`。

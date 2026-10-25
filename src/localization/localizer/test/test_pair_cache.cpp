@@ -170,3 +170,43 @@ TEST(FramePairCache, SingleStreamNeverPairs)
         other.addOdom(f.t, f.pose);
     EXPECT_FALSE(other.newest(0.05, p));
 }
+
+// A time jump-back (bag loop, sim restart) starts a new epoch.  The pre-jump stamps used to stay the
+// "newest" forever - prune() drops the SMALLEST stamps, i.e. the new ones - so newest() kept
+// returning an already processed frame and the localizer stalled for good.
+TEST(FramePairCache, TimeJumpBackStartsANewEpoch)
+{
+    Cache cache(40, 1.0);
+    for (const auto &f : frames(50, 0.1, 1000.0)) // up to t = 1004.9
+    {
+        cache.addCloud(f.t, f.cloud);
+        cache.addOdom(f.t, f.pose);
+    }
+    Cache::Pair p;
+    ASSERT_TRUE(cache.newest(0.05, p));
+    EXPECT_NEAR(p.stamp, 1004.9, 1e-9);
+
+    // the stream restarts at t = 10 s
+    const auto restarted = frames(5, 0.1, 10.0);
+    for (const auto &f : restarted)
+    {
+        cache.addCloud(f.t, f.cloud);
+        cache.addOdom(f.t, f.pose);
+    }
+    ASSERT_TRUE(cache.newest(0.05, p));
+    EXPECT_NEAR(p.stamp, 10.4, 1e-9) << "the new epoch must be served, not the stale pre-jump frame";
+    EXPECT_EQ(cache.resets(), 1u);
+    EXPECT_EQ(cache.cloudCount(), 5u);
+}
+
+// A message that is merely late (inside the tolerance) is NOT an epoch change.
+TEST(FramePairCache, LateMessageDoesNotReset)
+{
+    Cache cache(40, 1.0);
+    cache.addCloud(100.0, 1);
+    cache.addOdom(100.0, "a");
+    cache.addCloud(100.3, 2);
+    cache.addCloud(99.8, 3); // 0.5 s late
+    EXPECT_EQ(cache.resets(), 0u);
+    EXPECT_EQ(cache.cloudCount(), 3u);
+}

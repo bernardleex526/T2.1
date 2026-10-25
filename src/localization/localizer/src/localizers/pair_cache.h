@@ -36,16 +36,19 @@ public:
         PoseT pose{};
     };
 
-    explicit FramePairCache(std::size_t depth = 40) : m_depth(depth ? depth : 1) {}
+    explicit FramePairCache(std::size_t depth = 40, double jump_back_reset_s = 1.0)
+        : m_depth(depth ? depth : 1), m_jump_back_reset_s(jump_back_reset_s) {}
 
     void addCloud(double stamp, const CloudT &cloud)
     {
+        resetOnJumpBack(stamp, m_clouds);
         m_clouds[stamp] = cloud;
         prune(m_clouds);
     }
 
     void addOdom(double stamp, const PoseT &pose)
     {
+        resetOnJumpBack(stamp, m_odom);
         m_odom[stamp] = pose;
         prune(m_odom);
     }
@@ -76,8 +79,26 @@ public:
     std::size_t cloudCount() const { return m_clouds.size(); }
     std::size_t odomCount() const { return m_odom.size(); }
     std::size_t depth() const { return m_depth; }
+    // How many times a time jump-back emptied the cache (bag loop, clock reset, sim restart).
+    std::size_t resets() const { return m_resets; }
 
 private:
+    // A stamp older than the newest stored one by more than jump_back_reset_s is a new time epoch,
+    // not a late message.  Without this the pre-jump stamps stay "newest" forever (prune() drops
+    // the SMALLEST stamps, i.e. the new ones), so newest() keeps returning a frame that was already
+    // processed and the localizer stalls for good.
+    template <typename M>
+    void resetOnJumpBack(double stamp, const M &store)
+    {
+        if (m_jump_back_reset_s > 0.0 && !store.empty() &&
+            stamp < store.rbegin()->first - m_jump_back_reset_s)
+        {
+            m_clouds.clear();
+            m_odom.clear();
+            ++m_resets;
+        }
+    }
+
     template <typename M>
     void prune(M &store)
     {
@@ -86,6 +107,8 @@ private:
     }
 
     std::size_t m_depth;
+    double m_jump_back_reset_s;
+    std::size_t m_resets = 0;
     std::map<double, CloudT> m_clouds;
     std::map<double, PoseT> m_odom;
 };

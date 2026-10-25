@@ -99,9 +99,9 @@ ros2 service call /localizer/relocalize_check interface/srv/IsValid "{code: 0}"
 ### 4.2 激光帧时间窗与逐点时间
 
 - Livox `CustomMsg`：`p.curvature = msg->points[i].offset_time / 1e6`，即**相对本帧首点的毫秒偏移**（`utils.cpp:23`，在 `livox2PCL` 内）。
-- 通用 `PointCloud2`：仅当 `pcl2_time_field` 非空且 `pcl2_time_scale>0`，且该字段 datatype 为 FLOAT32/FLOAT64 时解析；`p.curvature = (t - t0_sec) * 1000.0`，其中 **`t0_sec` 是第一个“通过距离过滤后保留的点”的时间**，不是帧头时间、也不是被过滤掉的点的最小值（`utils.cpp:98-110`）。
-  - 适配含义：若驱动给出的是**绝对时间**（典型如 Ouster `t` 纳秒），代码用“首个保留点”基准做差，得到的是**相对偏移**；scale 必须把字段换算到**秒**（Ouster `1e-9`，RoboSense `timestamp` 为 `1.0`）。字段缺失或类型不是浮点 → `curvature = 0`，即**该模式下不做扫描内运动补偿**（`utils.cpp:110-112`），这是**静默降级**，不是报错。
-- 帧时间窗：`cloud_start_time = lidar_buffer.front().first`（帧头时间），`cloud_end_time = cloud_start_time + points.back().curvature/1000.0`（末点偏移换算为秒）（`lio_node.cpp:387-389`）。点云先按 `curvature` 升序排序（`lio_node.cpp:386-387`）。
+- 通用 `PointCloud2`：仅当 `pcl2_time_field` 非空且 `pcl2_time_scale>0`，且该字段 datatype 为 FLOAT32/FLOAT64/UINT32/INT32 时解析；`p.curvature = (t - t0_sec) * 1000.0`，其中 **`t0_sec` 是通过距离过滤后保留的点中最早的时间**（点不一定按时间排序），不是帧头时间、也不是被过滤掉的点的最小值（`utils.cpp` `pcl2_to_PCL`）。字段按 datatype 用 memcpy 读取，越界或类型不符的字段视为不存在。
+  - 适配含义：若驱动给出的是**绝对时间**（如 RoboSense `timestamp`，FLOAT64 秒），扫描起点就是 `t0_sec`；若给出的是**相对帧头的偏移**（如 Ouster `t` 纳秒，scale `1e-9`；Velodyne `time` 秒），扫描起点是“帧头 + `t0_sec`”（`Utils::scanStartTime`；偏移可为负，即帧头打在末点）。scale 必须把字段换算到**秒**。字段缺失或类型不支持 → `curvature = 0`，即**该模式下不做扫描内运动补偿**，这是**静默降级**，不是报错。
+- 帧时间窗：`cloud_start_time` = 上述扫描起点，`cloud_end_time = cloud_start_time + points.back().curvature/1000.0`（末点偏移换算为秒）。点云先按 `curvature` 升序排序。一个有效点都不剩的帧在回调里直接丢弃（曾在 `syncPackage`/`undistort` 对空 vector 取 `back()`/`end()-1` 导致崩溃）。
 - **契约前提（条件性，须逐雷达核实）**：`curvature` 在用之前必须满足“相对**消息帧头**毫秒偏移”这一语义。
   - 对 **Livox `CustomMsg`**，`offset_time` 由驱动按帧内相对时间给出，代码只是除 `1e6` 换成毫秒（`utils.cpp:23`），因此**源码层面**成立（依赖驱动契约，非本仓库保证）。
   - 对 **通用 `PointCloud2`**，代码的零点是“**首个通过距离过滤后被保留的点**”的时间 `t0_sec`（`utils.cpp:103,106`），**这不等于消息帧头时间**：若帧头与首点是同一时刻（常见驱动布局）则相等，但只要**抽稀改变了保留点**、**距离过滤删掉了更早的点**、或驱动本身让首点时间晚于帧头（如按列/按环输出、丢包补点），`t0_sec` 就会**偏离帧头**，`curvature` 也随之整体平移。
@@ -168,7 +168,7 @@ ros2 service call /localizer/relocalize_check interface/srv/IsValid "{code: 0}"
 | 图像分支（着色） | 源码存在、**默认未接线** | 设 `image_topic`、启动相机、核对内外参 | §1、§4.4 |
 | 视觉残差 / 光流 / 面元地图 | **未实现** | 属**需求**，非接口：需扩状态量、扩残差、扩地图与雅可比（见 §5.3） | §1.2；死代码仅 `pinhole_camera.*` |
 | 视觉融合权重 / 光度权重参数 | **不存在** | 全仓无此类参数或 setter；`CVUtils::weightPixel` 是双线性插值权重（死代码），与“融合权重”无关（见 §5.3 C） | 全仓 grep |
-| 足式/轮式里程计融合 | **已实现，出厂关闭** | `use_leg_odom: true` 订阅 `nav_msgs/Odometry`（`twist.linear`，base_link 系）；在滤波线程按扫描末时刻对齐，经 `leg_odom_ext_ib` 外参与 ω×r 杆臂变到 IMU 系后做 `IESKF::updateLegVelocity`（2026-10-18 修正：此前在传感器回调线程直接更新滤波器，存在数据竞争）。观测噪声须先实测 | §7 |
+| 足式/轮式里程计融合 | **已实现，出厂关闭** | `use_leg_odom: true` 订阅 `nav_msgs/Odometry`（`twist.linear`，base_link 系）；在滤波线程按扫描末时刻对齐，经 `leg_odom_ext_ib` 外参与杆臂 `v_imu = R_ib v_base − ω×t_ib` 变到 IMU 系后做 `IESKF::updateLegVelocity`（2026-10-18 修正：此前在传感器回调线程直接更新滤波器，存在数据竞争；2026-10-25 修正：杆臂项符号曾写反，且现在只在首个激光更新之后才融合）。观测噪声须先实测 | §7 |
 
 ### 5.3 FastLIVO2 升级接口提案：**现有已实现接口** vs **未来适配层**
 

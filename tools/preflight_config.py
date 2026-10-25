@@ -81,6 +81,7 @@ KNOWN_KEYS = {
     "point_quality_thresh", "lidar_cov_inv", "imu_lpf_enable", "imu_lpf_cutoff_hz",
     "imu_lpf_sample_rate_hz", "imu_saturation_detect", "imu_saturation_limit_mps2",
     "use_leg_odom", "leg_odom_topic", "leg_odom_cov", "leg_odom_ext_ib", "leg_odom_max_age_s",
+    "path_max_poses",
     "max_bias_gyro", "max_bias_accel", "max_velocity",
     # sensor adaptation
     "lidar_type", "lidar_max_line", "imu_acc_scale",
@@ -109,6 +110,10 @@ KNOWN_FOREIGN_EXT_IL = {
 # POINT_TYPE=XYZIRT).  A nanosecond scale on them multiplies a 0.1 s scan span down to ~1e-10 s,
 # which silently disables in-scan motion compensation.
 SECONDS_TIME_FIELDS = {"timestamp"}
+# ... but only for the RoboSense driver: the Livox ROS 2 driver's PointCloud2 also names its per-point
+# time `timestamp`, in NANOSECONDS, where 1e-9 is the correct scale.  The topic is the only vendor hint
+# a config carries.
+ROBOSENSE_TOPIC_HINTS = ("rslidar",)
 
 
 class Report:
@@ -234,10 +239,18 @@ def check_time_field(cfg: Dict[str, Any], rep: Report, allow_none: bool) -> None
             rep.warn(f"pcl2_time_scale: {s:g} > 1. A scale that enlarges the offset is "
                      "unusual (the field is normally in s/ms/us/ns); verify the units")
         if field in SECONDS_TIME_FIELDS and s < 1e-2:
-            rep.error(f"pcl2_time_scale: {s:g} on '{field}'. rslidar_sdk publishes '{field}' as "
-                      "FLOAT64 SECONDS, so this scale shrinks a 0.1 s scan to ~1e-10 s and "
-                      "disables in-scan motion compensation. Use 1.0 (confirm with "
-                      "tools/rslidar_pcl2_probe.py).")
+            topic = str(cfg.get("lidar_topic", ""))
+            if any(h in topic for h in ROBOSENSE_TOPIC_HINTS):
+                rep.error(f"pcl2_time_scale: {s:g} on '{field}'. rslidar_sdk publishes '{field}' as "
+                          "FLOAT64 SECONDS, so this scale shrinks a 0.1 s scan to ~1e-10 s and "
+                          "disables in-scan motion compensation. Use 1.0 (confirm with "
+                          "tools/rslidar_pcl2_probe.py).")
+            else:
+                # the same field name is NANOSECONDS in the Livox driver's PointCloud2 (scale 1e-9
+                # is right there), so outside a RoboSense topic this is only a units reminder
+                rep.warn(f"pcl2_time_scale: {s:g} on '{field}' (lidar_topic '{topic}'): rslidar_sdk "
+                         f"publishes '{field}' in seconds (scale 1.0), the Livox driver's PointCloud2 "
+                         "in nanoseconds (1e-9). Confirm the units with tools/rslidar_pcl2_probe.py.")
 
 
 def check_imu(cfg: Dict[str, Any], rep: Report) -> None:

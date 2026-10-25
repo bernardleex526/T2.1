@@ -7,7 +7,7 @@ preprocessor:
     input_cloud_topic: "/mapping/body_cloud"          # 输入原始点云话题
     output_cloud_topic: "/preprocessed_cloud"         # 预处理后点云发布话题（用于调试）
     obstacle_cloud_topic: "/obstacle_cloud"           # 障碍物聚类点云发布话题
-    cmd_vel_topic: "/cmd_vel_obstacle"                    # 输出速度指令话题
+    cmd_vel_topic: "/cmd_vel_test"                        # 输出速度指令话题(g1_movement_gate 订阅 /cmd_vel_test)
 
     # 点云预处理参数
     min_dist: 0.2                                      # 有效点云的最小距离（米，忽略过近点）

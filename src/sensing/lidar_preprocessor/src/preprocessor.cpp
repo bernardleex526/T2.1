@@ -113,7 +113,6 @@ private:
         // ====================== 1. 预处理 ======================
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_raw(new pcl::PointCloud<pcl::PointXYZ>);
         pcl::fromROSMsg(*cloud_msg, *cloud_raw);
-        size_t raw_count = cloud_raw->size();
 
         // 距离裁剪
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_dist(new pcl::PointCloud<pcl::PointXYZ>);
@@ -250,10 +249,9 @@ private:
         obstacle_cloud_pub_->publish(obstacle_out);
 
         // ====================== 6. 日志 ======================
-        auto &clk = *this->get_clock();
-        // RCLCPP_INFO_THROTTLE(this->get_logger(), clk, static_cast<int>(params_.log_throttle * 1000),
+        // RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), static_cast<int>(params_.log_throttle * 1000),
         //     "原始点数: %zu | 聚类数: %zu | 有效障碍簇: %d | 斥力(x=%.2f, y=%.2f) | 速度(%.2f, %.2f) m/s",
-        //     raw_count, cluster_indices.size(), valid_clusters, repulsion_x, repulsion_y, vx, vy);
+        //     cloud_raw->size(), cluster_indices.size(), valid_clusters, repulsion_x, repulsion_y, vx, vy);
     }
 };
 

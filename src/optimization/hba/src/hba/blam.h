@@ -127,6 +127,10 @@ public:
 
     static void plusDelta(Vec<Pose> &poses, const Eigen::VectorXd &x);
 
+    // Information matrix ([rot; trans], GTSAM Pose3 ordering) of the relative pose T_i^-1 T_j for a
+    // BetweenFactor(i, j), from the window Hessian at the current poses (derivation in blam.cpp).
+    M6D relativeInformation(size_t i, size_t j) const;
+
     pcl::PointCloud<pcl::PointXYZI>::Ptr getLocalCloud();
 
 private:

@@ -2,14 +2,94 @@
 #include <sensor_msgs/msg/point_field.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <vector>
+
+namespace
+{
+using PF = sensor_msgs::msg::PointField;
+
+// 字节宽度；未知 datatype 返回 0
+std::size_t datatypeSize(int datatype)
+{
+    switch (datatype)
+    {
+    case PF::INT8:
+    case PF::UINT8:
+        return 1;
+    case PF::INT16:
+    case PF::UINT16:
+        return 2;
+    case PF::INT32:
+    case PF::UINT32:
+    case PF::FLOAT32:
+        return 4;
+    case PF::FLOAT64:
+        return 8;
+    default:
+        return 0;
+    }
+}
+
+template <typename T>
+double readAs(const uint8_t *p)
+{
+    T v;
+    std::memcpy(&v, p, sizeof(T)); // 字段不保证对齐，不能 reinterpret_cast 解引用
+    return static_cast<double>(v);
+}
+
+double readScalar(const uint8_t *p, int datatype)
+{
+    switch (datatype)
+    {
+    case PF::INT8: return readAs<int8_t>(p);
+    case PF::UINT8: return readAs<uint8_t>(p);
+    case PF::INT16: return readAs<int16_t>(p);
+    case PF::UINT16: return readAs<uint16_t>(p);
+    case PF::INT32: return readAs<int32_t>(p);
+    case PF::UINT32: return readAs<uint32_t>(p);
+    case PF::FLOAT32: return readAs<float>(p);
+    case PF::FLOAT64: return readAs<double>(p);
+    default: return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
+struct FieldRef
+{
+    int offset = -1;
+    int datatype = 0;
+    bool valid() const { return offset >= 0; }
+};
+
+// 按名字查字段，并要求它完整落在一个点内
+FieldRef findField(const sensor_msgs::msg::PointCloud2 &msg, const std::string &name)
+{
+    FieldRef ref;
+    for (const auto &f : msg.fields)
+    {
+        if (f.name != name)
+            continue;
+        const std::size_t sz = datatypeSize(f.datatype);
+        if (sz == 0 || static_cast<std::size_t>(f.offset) + sz > msg.point_step)
+            return ref;
+        ref.offset = static_cast<int>(f.offset);
+        ref.datatype = static_cast<int>(f.datatype);
+        return ref;
+    }
+    return ref;
+}
+} // namespace
+
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg, int filter_num, double min_range, double max_range, int max_line)
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZINormal>);
-    int point_num = msg->point_num;
-    cloud->reserve(point_num / filter_num + 1);
-    for (int i = 0; i < point_num; i += filter_num)
+    // point_num 是驱动声明的点数，不保证等于 points.size()；filter_num <= 0 时按 1 处理(否则除零/死循环)
+    const std::size_t point_num = std::min<std::size_t>(msg->point_num, msg->points.size());
+    const std::size_t stride = static_cast<std::size_t>(std::max(1, filter_num));
+    cloud->reserve(point_num / stride + 1);
+    for (std::size_t i = 0; i < point_num; i += stride)
     {
         if ((msg->points[i].line < max_line) && ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00))
         {
@@ -17,6 +97,8 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driv
             float x = msg->points[i].x;
             float y = msg->points[i].y;
             float z = msg->points[i].z;
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+                continue;
             if (x * x + y * y + z * z < min_range * min_range || x * x + y * y + z * z > max_range * max_range)
                 continue;
             pcl::PointXYZINormal p;
@@ -34,42 +116,31 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::livox2PCL(const livox_ros_driv
 pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs::msg::PointCloud2::SharedPtr msg, int filter_num, double min_range, double max_range, const std::string &time_field, double time_scale, int filter_phase, double *scan_t0_sec)
 {
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZINormal>);
-    // 按字段名定位字节偏移
-    auto find_offset = [&](const std::string &name) -> int
-    {
-        for (const auto &f : msg->fields)
-            if (f.name == name)
-                return static_cast<int>(f.offset);
-        return -1;
-    };
-    int off_x = find_offset("x");
-    int off_y = find_offset("y");
-    int off_z = find_offset("z");
-    if (off_x < 0 || off_y < 0 || off_z < 0)
-        return cloud; // 不含 xyz 字段，无法转换
-    int off_int = find_offset("intensity");
-    // 时间字段需按其 datatype 解析(FLOAT32/FLOAT64)，否则禁用每点时间
-    int off_time = -1, time_datatype = 0;
+    if (scan_t0_sec)
+        *scan_t0_sec = std::numeric_limits<double>::quiet_NaN();
+    const FieldRef fx = findField(*msg, "x");
+    const FieldRef fy = findField(*msg, "y");
+    const FieldRef fz = findField(*msg, "z");
+    auto is_float = [](const FieldRef &f) { return f.datatype == PF::FLOAT32 || f.datatype == PF::FLOAT64; };
+    if (!fx.valid() || !fy.valid() || !fz.valid() || !is_float(fx) || !is_float(fy) || !is_float(fz))
+        return cloud; // 不含(浮点) xyz 字段，无法转换
+    const FieldRef fi = findField(*msg, "intensity");
+    // 时间字段需按其 datatype 解析(FLOAT32/FLOAT64/UINT32/INT32)，否则禁用每点时间
+    FieldRef ft;
     if (!time_field.empty() && time_scale > 0.0)
     {
-        for (const auto &f : msg->fields)
-        {
-            if (f.name == time_field)
-            {
-                off_time = static_cast<int>(f.offset);
-                time_datatype = static_cast<int>(f.datatype);
-                break;
-            }
-        }
-        if (time_datatype != sensor_msgs::msg::PointField::FLOAT32 &&
-            time_datatype != sensor_msgs::msg::PointField::FLOAT64 &&
-            time_datatype != sensor_msgs::msg::PointField::UINT32 &&
-            time_datatype != sensor_msgs::msg::PointField::INT32)
-            off_time = -1; // 支持浮点与整型时间字段(如 Velodyne time / RoboSense timestamp)
+        ft = findField(*msg, time_field);
+        if (ft.datatype != PF::FLOAT32 && ft.datatype != PF::FLOAT64 &&
+            ft.datatype != PF::UINT32 && ft.datatype != PF::INT32)
+            ft = FieldRef(); // 支持浮点与整型时间字段(如 Velodyne time / RoboSense timestamp)
     }
 
-    std::size_t point_step = msg->point_step;
-    std::size_t point_num = msg->width * msg->height;
+    const std::size_t point_step = msg->point_step;
+    if (point_step == 0)
+        return cloud;
+    // 声明的点数不能超过 data 实际承载的完整点数(畸形消息不得越界读)
+    const std::size_t point_num = std::min<std::size_t>(static_cast<std::size_t>(msg->width) * msg->height,
+                                                        msg->data.size() / point_step);
     const int stride_i = std::max(1, filter_num);
     const std::size_t stride = static_cast<std::size_t>(stride_i);
     // Sampling phase (C2.3): start the stride at `filter_phase` instead of 0, i.e. keep the raw
@@ -81,49 +152,31 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
     const int phase_folded = ((filter_phase % stride_i) + stride_i) % stride_i;
     const std::size_t start = static_cast<std::size_t>(phase_folded);
     cloud->reserve(point_num / stride + 1);
-    auto read_float = [&](std::size_t base, int off) -> float
-    {
-        if (off < 0)
-            return 0.0f;
-        const uint8_t *p = msg->data.data() + base + off;
-        return *reinterpret_cast<const float *>(p);
-    };
-    auto read_time = [&](std::size_t base) -> double
-    {
-        const uint8_t *p = msg->data.data() + base + off_time;
-        if (time_datatype == sensor_msgs::msg::PointField::FLOAT64)
-            return (*reinterpret_cast<const double *>(p)) * time_scale;
-        if (time_datatype == sensor_msgs::msg::PointField::FLOAT32)
-            return static_cast<double>((*reinterpret_cast<const float *>(p)) * static_cast<float>(time_scale));
-        if (time_datatype == sensor_msgs::msg::PointField::UINT32)
-            return static_cast<double>(*reinterpret_cast<const uint32_t *>(p)) * time_scale;
-        if (time_datatype == sensor_msgs::msg::PointField::INT32)
-            return static_cast<double>(*reinterpret_cast<const int32_t *>(p)) * time_scale;
-        return 0.0;
-    };
+    const uint8_t *data = msg->data.data();
 
     std::vector<double> times;
-    if (off_time >= 0)
+    if (ft.valid())
         times.reserve(point_num / stride + 1);
     for (std::size_t i = start; i < point_num; i += stride)
     {
-        std::size_t base = i * point_step;
-        float x = read_float(base, off_x);
-        float y = read_float(base, off_y);
-        float z = read_float(base, off_z);
+        const uint8_t *base = data + i * point_step;
+        const double x = readScalar(base + fx.offset, fx.datatype);
+        const double y = readScalar(base + fy.offset, fy.datatype);
+        const double z = readScalar(base + fz.offset, fz.datatype);
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
             continue;
-        if (x * x + y * y + z * z < min_range * min_range || x * x + y * y + z * z > max_range * max_range)
+        const double r2 = x * x + y * y + z * z;
+        if (r2 < min_range * min_range || r2 > max_range * max_range)
             continue;
         pcl::PointXYZINormal p;
-        p.x = x;
-        p.y = y;
-        p.z = z;
-        p.intensity = read_float(base, off_int);
+        p.x = static_cast<float>(x);
+        p.y = static_cast<float>(y);
+        p.z = static_cast<float>(z);
+        p.intensity = fi.valid() ? static_cast<float>(readScalar(base + fi.offset, fi.datatype)) : 0.0f;
         p.curvature = 0.0f; // 无每点时间，扫描内不做运动补偿
-        if (off_time >= 0)
+        if (ft.valid())
         {
-            const double t = read_time(base); // 秒
+            const double t = readScalar(base + ft.offset, ft.datatype) * time_scale; // 秒
             if (!std::isfinite(t))
                 continue;
             times.push_back(t);
@@ -142,6 +195,21 @@ pcl::PointCloud<pcl::PointXYZINormal>::Ptr Utils::pcl2_to_PCL(const sensor_msgs:
     if (scan_t0_sec)
         *scan_t0_sec = t0_sec;
     return cloud;
+}
+
+double Utils::scanStartTime(double header_sec, double point_t0, bool *inconsistent)
+{
+    if (inconsistent)
+        *inconsistent = false;
+    if (!std::isfinite(point_t0))
+        return header_sec;
+    if (std::fabs(point_t0 - header_sec) < 1.0)
+        return point_t0; // 绝对时间：最早点即扫描起点，与驱动把帧头打在首点还是末点无关
+    if (std::fabs(point_t0) < 1.0)
+        return header_sec + point_t0; // 相对帧头的偏移：起点 = 帧头 + 最早偏移(可为负，如帧头=末点)
+    if (inconsistent)
+        *inconsistent = true;
+    return header_sec;
 }
 
 double Utils::getSec(std_msgs::msg::Header &header)

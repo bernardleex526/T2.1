@@ -100,10 +100,6 @@ void IESKF::predict(const Input &inp, double dt, const M12D &Q)
 
 void IESKF::update()
 {
-     // ==================== 诊断代码开始 ====================
-    auto update_start = std::chrono::high_resolution_clock::now();
-    double last_res = 1e10;
-    // ==================== 诊断代码结束 ====================
     State predict_x = m_x;
     SharedState shared_data;
     shared_data.iter_num = 0;
@@ -121,16 +117,9 @@ void IESKF::update()
 
     for (size_t i = 0; i < m_max_iter; i++)
     {
-         // ==================== 诊断代码开始 ====================
-        auto iter_start = std::chrono::high_resolution_clock::now();
-        // ==================== 诊断代码结束 ====================
         m_loss_func(m_x, shared_data);
         if (!shared_data.valid)
             break;
-        // ==================== 诊断代码开始 ====================
-        auto iter_end = std::chrono::high_resolution_clock::now();
-        double iter_time = std::chrono::duration<double, std::milli>(iter_end - iter_start).count();
-        // ==================== 诊断代码结束 ====================
         H.setZero();
         b.setZero();
         delta = m_x - predict_x;
@@ -164,33 +153,9 @@ void IESKF::update()
         have_update = true;
         last_usable = true;
 
-        // ==================== 诊断代码开始 ====================
-        double position_change = delta.segment<3>(3).norm();
-        double rotation_change = delta.segment<3>(0).norm() * 57.3; // 转成度
-        
-        // RCLCPP_INFO(m_logger,
-        //     "ITERATION %zu: Time=%.2fms, PosDelta=%.3fm, RotDelta=%.3fdeg, Res=%.6f, Valid=%s",
-        //     i, iter_time, position_change, rotation_change, 
-        //     shared_data.res, shared_data.valid ? "true" : "false");
-            
-        last_res = shared_data.res;
-        // ==================== 诊断代码结束 ====================
-
         if (m_stop_func(delta))
             break;
     }
-
-    // ==================== 诊断代码开始 ====================
-    auto update_end = std::chrono::high_resolution_clock::now();
-    double total_update_time = std::chrono::duration<double, std::milli>(update_end - update_start).count();
-    
-    // 协方差监控
-    double pos_variance = m_P.block<3,3>(3,3).trace();
-    // RCLCPP_INFO(m_logger, "COVARIANCE: PositionVariance=%.6f", pos_variance);
-    
-    // RCLCPP_WARN(m_logger,  "KF_UPDATE_TOTAL: %.2fms, Iterations=%zu", 
-    //             total_update_time, shared_data.iter_num);
-    // ==================== 诊断代码结束 ====================
 
     //约束应用
     m_x.applyConstraints();

@@ -1,7 +1,7 @@
 #include "image_processor.h"
 
 ImageProcessor::ImageProcessor(Config &config, std::shared_ptr<IESKF> kf)
-    : m_kf(kf), m_config(config)
+    : m_config(config), m_kf(kf)
 {
     m_frame_count = 0;
     m_camera = std::make_shared<PinholeCamera>(m_config.cam_width, m_config.cam_height,
@@ -12,7 +12,7 @@ ImageProcessor::ImageProcessor(Config &config, std::shared_ptr<IESKF> kf)
                                                m_config.cam_d[4]);
 }
 
-void ImageProcessor::process(cv::Mat &img, CloudType::Ptr cloud, bool is_new_cloud)
+void ImageProcessor::process(cv::Mat &img, CloudType::Ptr cloud, bool /*is_new_cloud*/)
 {
     m_frame_count++;
     if (img.cols != m_camera->width() || img.rows != m_camera->height())

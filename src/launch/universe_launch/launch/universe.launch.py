@@ -1,7 +1,8 @@
 import os
 import launch
+import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess 
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration, EnvironmentVariable, ThisLaunchFileDir, Command, FindExecutable, PythonExpression
@@ -33,6 +34,48 @@ livox_ros2_params = [
     {"user_config_path": user_config_path},
     {"cmdline_input_bd_code": cmdline_bd_code}
 ]
+
+
+def lio_imu_params(lio_config_path):
+    """imu_topic / imu_acc_scale of the lio_node profile, with lio_node's own defaults.
+
+    robot_pose's IMU propagation must integrate the SAME stream with the SAME accel scale as
+    lio_node; hard-coding the Airy values (/imu/data, 1.0) left /robot_pose_map silent with
+    lidar_vendor:=livox (MID360: /livox/imu, 10.0).
+    """
+    with open(lio_config_path) as f:
+        cfg = yaml.safe_load(f) or {}
+    return str(cfg.get('imu_topic', '/livox/imu')), float(cfg.get('imu_acc_scale', 10.0))
+
+
+def _map_pose_publisher(context, use_sim_time):
+    lio_config = os.path.join(get_package_share_directory('fastlio2'), 'config',
+                              LaunchConfiguration('config_file').perform(context))
+    imu_topic, imu_acc_scale = lio_imu_params(lio_config)
+    return [Node(
+        package="robot_pose",
+        executable="map_pose_publisher",
+        name="map_pose_publisher",
+        output="screen",
+        parameters=[{
+            # lio_node runs in namespace "mapping": its odometry is /mapping/lio_odom (the node's
+            # default /fastlio2/lio_odom has no publisher here, which left this node silent)
+            "odom_topic": "/mapping/lio_odom",
+            "current_pose_mode": True,
+            "predict_current_pose": True,
+            # Propagate the newest LIO state to "now" with the measured IMU samples instead of the
+            # constant-velocity model.  Gazebo (docs/validation/gazebo_regression_20261018.md):
+            # 1.0 m/s 3D RMSE 1.3 cm / 98% post-lock output vs 9.8 cm for constant velocity, whose
+            # 0.12 s window cannot cover one 10 Hz scan period + LIO latency.
+            "imu_predict": LaunchConfiguration('imu_predict'),
+            "imu_topic": imu_topic,           # read from config_file: the IMU lio_node integrates
+            "imu_acc_scale": imu_acc_scale,   # ... and its accel scale
+            "max_imu_prediction_s": 0.25,
+            # constant-velocity bound, used only when imu_predict is false; see docs/tuning_guide.md
+            "max_prediction_s": LaunchConfiguration('max_prediction_s'),
+            "use_sim_time": use_sim_time,
+        }]
+    )]
 ################### 通用参数声明（统一map/use_sim_time） ###################
 def generate_launch_description():
     # 1. 统一声明核心参数（删除重复的map参数声明）
@@ -162,32 +205,8 @@ def generate_launch_description():
             'params_file': nav2_params_file
         }.items(),
     )
-    ## 位姿输出节点
-    ## 位姿输出节点（配置预测模式满足 <= 5cm 指标）
-    map_pose_node = Node(
-        package="robot_pose",
-        executable="map_pose_publisher",
-        name="map_pose_publisher",
-        output="screen",
-        parameters=[{
-            # lio_node runs in namespace "mapping": its odometry is /mapping/lio_odom (the node's
-            # default /fastlio2/lio_odom has no publisher here, which left this node silent)
-            "odom_topic": "/mapping/lio_odom",
-            "current_pose_mode": True,
-            "predict_current_pose": True,
-            # Propagate the newest LIO state to "now" with the measured IMU samples instead of the
-            # constant-velocity model.  Gazebo (docs/validation/gazebo_regression_20261018.md):
-            # 1.0 m/s 3D RMSE 1.3 cm / 98% post-lock output vs 9.8 cm for constant velocity, whose
-            # 0.12 s window cannot cover one 10 Hz scan period + LIO latency.
-            "imu_predict": LaunchConfiguration('imu_predict'),
-            "imu_topic": "/imu/data",  # the IMU lio_node integrates (airy.yaml imu_topic)
-            "imu_acc_scale": 1.0,       # must equal airy.yaml imu_acc_scale
-            "max_imu_prediction_s": 0.25,
-            # constant-velocity bound, used only when imu_predict is false; see docs/tuning_guide.md
-            "max_prediction_s": LaunchConfiguration('max_prediction_s'),
-            "use_sim_time": use_sim_time,
-        }]
-    )
+    ## 位姿输出节点（配置预测模式满足 <= 5cm 指标）；IMU 话题/量纲在启动时从 config_file 读取
+    map_pose_node = OpaqueFunction(function=_map_pose_publisher, args=[use_sim_time])
     ## 速度平滑节点
     cmd_smooth_node = Node(
         package="cmd_vel_smoother",
@@ -222,10 +241,10 @@ def generate_launch_description():
         executable='preprocessor',
         name='preprocessor',
         output='screen',
-        parameters=[{
-            "config_path": obstacle_config_path
-        }]
-    )     
+        # a ROS parameter FILE (the node declares input_cloud_topic/cmd_vel_topic/...; it has no
+        # config_path parameter, so passing {"config_path": ...} left config.yaml unread)
+        parameters=[obstacle_config_path]
+    )
 
     rviz_cfg = PathJoinSubstitution([FindPackageShare("localizer"), "rviz", "localizer.rviz"])
     rviz_node = Node(

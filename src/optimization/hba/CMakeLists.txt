@@ -61,6 +61,16 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY rviz DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  # BLAM gradient / Hessian / relative information against central differences of the exact
+  # plane-eigenvalue cost, and LM convergence on synthetic planar scenes.
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_blam test/test_blam.cpp src/hba/blam.cpp src/hba/commons.cpp)
+  target_include_directories(test_blam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/hba)
+  target_link_libraries(test_blam ${PCL_LIBRARIES})
+  if(TARGET Sophus::Sophus)
+    target_link_libraries(test_blam Sophus::Sophus)
+  endif()
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

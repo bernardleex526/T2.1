@@ -168,6 +168,24 @@ if(BUILD_TESTING)
     target_link_libraries(test_lidar_processor OpenMP::OpenMP_CXX)
   endif()
 
+  # Leg-odometry lever arm (map_builder/leg_odom.h) against rigid-body finite differences.
+  ament_add_gtest(test_leg_odom test/test_leg_odom.cpp)
+  target_include_directories(test_leg_odom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                  ${EIGEN3_INCLUDE_DIRS} ${T21_SOPHUS_INCLUDE_DIRS}
+                                                  ${PCL_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+
+  # IMUProcessor::undistort: no double integration across an IMU gap, no de-skew of an empty scan.
+  ament_add_gtest(test_imu_processor test/test_imu_processor.cpp
+                  src/map_builder/ieskf.cpp
+                  src/map_builder/commons.cpp
+                  src/map_builder/imu_processor.cpp)
+  target_include_directories(test_imu_processor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                                                       ${EIGEN3_INCLUDE_DIRS}
+                                                       ${PCL_INCLUDE_DIRS}
+                                                       ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(test_imu_processor rclcpp pcl_conversions sensor_msgs)
+  target_link_libraries(test_imu_processor ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files

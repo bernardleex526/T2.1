@@ -31,7 +31,7 @@ using namespace std::chrono_literals;
 // Stamp -> seconds, the domain every timing decision of this node is made in.
 static double toSeconds(const builtin_interfaces::msg::Time &t)
 {
-    return double(t.sec) + double(t.nanosec) * 1e-9;
+    return static_cast<double>(t.sec) + static_cast<double>(t.nanosec) * 1e-9;
 }
 
 // Seconds -> stamp, for the TF/cloud outputs.
@@ -53,6 +53,10 @@ static constexpr double kPairToleranceS = 0.05;
 // sub-millisecond stamp jitter: without it, a 0.099999 s frame gap would be rejected and every
 // following frame would be rejected too, halving the output rate for good.
 static constexpr double kRateLimitSlack = 0.95;
+
+// A frame stamp this much older than the last processed one starts a new time epoch (the same bound
+// FramePairCache uses to drop its pre-jump frames).
+static constexpr double kJumpBackResetS = 1.0;
 
 struct NodeConfig
 {
@@ -96,7 +100,7 @@ struct NodeState
     // (cloud, odom) pair, not a general N-way approximate-time policy: see pair_cache.h for why
     // the previous message_filters intake was replaced (it was measured to stop delivering
     // pairs permanently while both topics kept arriving at 10 Hz).
-    FramePairCache<sensor_msgs::msg::PointCloud2::ConstSharedPtr, std::pair<M3D, V3D>> pairs;
+    FramePairCache<sensor_msgs::msg::PointCloud2::ConstSharedPtr, std::pair<M3D, V3D>> pairs{kPairCacheDepth, kJumpBackResetS};
     std::string odom_frame_id;
     std::atomic<size_t> clouds_received{0};
     std::atomic<size_t> odoms_received{0};
@@ -143,10 +147,22 @@ public:
         // by the history depth (at most ~0.25 s at 10 Hz + 10 Hz), and the pairing always takes
         // the newest complete pair, so a slow consumer degrades to missed frames.
         const auto qos = rclcpp::SensorDataQoS();
+        // Callback groups (the node runs on a MultiThreadedExecutor, see main()):
+        //   default group  - the ICP timer, relocalize and /initialpose: they all use m_localizer,
+        //                    so they stay mutually exclusive with each other;
+        //   intake group   - cloud/odom subscriptions (only touch the pair cache, under its mutex),
+        //                    so frames keep being buffered while an align() runs;
+        //   check group    - relocalize_check, answered from the gate state under service_mutex.
+        //                    On a single-threaded executor it waited for the running ICP (0.1-0.4 s),
+        //                    which made robot_pose's 1 s trust in the answer lapse periodically.
+        m_intake_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        m_check_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        rclcpp::SubscriptionOptions intake_options;
+        intake_options.callback_group = m_intake_group;
         m_cloud_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            m_config.cloud_topic, qos, std::bind(&LocalizerNode::cloudCB, this, std::placeholders::_1));
+            m_config.cloud_topic, qos, std::bind(&LocalizerNode::cloudCB, this, std::placeholders::_1), intake_options);
         m_odom_sub = this->create_subscription<nav_msgs::msg::Odometry>(
-            m_config.odom_topic, qos, std::bind(&LocalizerNode::odomCB, this, std::placeholders::_1));
+            m_config.odom_topic, qos, std::bind(&LocalizerNode::odomCB, this, std::placeholders::_1), intake_options);
 
         m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
@@ -165,7 +181,9 @@ public:
 
         m_reloc_srv = this->create_service<interface::srv::Relocalize>("relocalize", std::bind(&LocalizerNode::relocCB, this, std::placeholders::_1, std::placeholders::_2));
 
-        m_reloc_check_srv = this->create_service<interface::srv::IsValid>("relocalize_check", std::bind(&LocalizerNode::relocCheckCB, this, std::placeholders::_1, std::placeholders::_2));
+        m_reloc_check_srv = this->create_service<interface::srv::IsValid>(
+            "relocalize_check", std::bind(&LocalizerNode::relocCheckCB, this, std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default, m_check_group);
 
         m_map_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("map_cloud", 10);
 
@@ -318,15 +336,15 @@ public:
     {
         const double dt = (this->now() - m_state.last_report).seconds();
         const size_t done = m_state.updates.load() - m_state.updates_at_report;
-        const double rate = dt > 0.0 ? double(done) / dt : 0.0;
+        const double rate = dt > 0.0 ? static_cast<double>(done) / dt : 0.0;
         const double last = m_state.validity.lastUpdateS();
         const double age = m_state.validity.hasUpdate() ? this->now().seconds() - last : -1.0;
         const size_t attempts = m_state.updates.load() + m_state.icp_failures.load();
         const double mean_align_ms = attempts
-                                         ? m_state.align_ms_total.load() / double(attempts)
+                                         ? m_state.align_ms_total.load() / static_cast<double>(attempts)
                                          : 0.0;
         const auto &st = m_localizer->stageTimings();
-        const double calls = st.align_calls ? double(st.align_calls) : 0.0;
+        const double calls = st.align_calls ? static_cast<double>(st.align_calls) : 0.0;
         RCLCPP_INFO(this->get_logger(),
                     "availability report (%s): %.2f ICP updates/s over %.1fs (%zu updates, %zu "
                     "synced frames, %zu ICP failures, mean align %.1f ms [rough %.1f + fit %.1f "
@@ -338,7 +356,7 @@ public:
                     calls ? st.rough_fitness_ms / calls : 0.0,
                     calls ? st.refine_align_ms / calls : 0.0,
                     calls ? st.refine_fitness_ms / calls : 0.0, age,
-                    int(m_gate.valid() && last >= 0.0 &&
+                    static_cast<int>(m_gate.valid() && last >= 0.0 &&
                         age <= m_config.validity_timeout_s),
                     m_state.clouds_received.load(), m_state.odoms_received.load(),
                     m_config.update_hz);
@@ -365,6 +383,15 @@ public:
         if (!newestPair(frame_stamp, frame_cloud_msg, frame_local_r, frame_local_t))
             return; // no complete (cloud, odom) pair yet
         // timer-thread only, so no lock is needed here
+        if (m_state.last_processed_stamp >= 0.0 &&
+            frame_stamp < m_state.last_processed_stamp - kJumpBackResetS)
+        {
+            // new time epoch (bag loop, clock reset): the rate limit below would otherwise hold
+            // every frame until the stamps climb past the pre-jump ones
+            RCLCPP_WARN(this->get_logger(), "frame stamp jumped back %.3f s -> %.3f s: rate limit reset",
+                        m_state.last_processed_stamp, frame_stamp);
+            m_state.last_processed_stamp = -1.0;
+        }
         if (m_state.last_processed_stamp >= 0.0 &&
             frame_stamp - m_state.last_processed_stamp < (1.0 / m_config.update_hz) * kRateLimitSlack)
             return; // same frame, or the configured update interval has not elapsed
@@ -658,6 +685,8 @@ private:
     ICPConfig m_localizer_config;
     std::shared_ptr<ICPLocalizer> m_localizer;
     OffsetOutlierGate m_gate;
+    rclcpp::CallbackGroup::SharedPtr m_intake_group;
+    rclcpp::CallbackGroup::SharedPtr m_check_group;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr m_cloud_sub;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr m_odom_sub;
     rclcpp::TimerBase::SharedPtr m_timer;
@@ -673,7 +702,12 @@ int main(int argc, char **argv)
     rclcpp::init(argc, argv);
     try
     {
-        rclcpp::spin(std::make_shared<LocalizerNode>());
+        // Multi-threaded so the check service and the intake run while an ICP align() is in
+        // progress; see the callback groups in the constructor.
+        auto node = std::make_shared<LocalizerNode>();
+        rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 3);
+        executor.add_node(node);
+        executor.spin();
     }
     catch (const std::exception &e)
     {

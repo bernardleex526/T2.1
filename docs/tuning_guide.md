@@ -260,6 +260,7 @@ python3 simulation/scripts/test_t1_accuracy.py --run-dir /tmp/sim_map --ref-dir 
 | 恢复慢 | 日志 `localization lock recovered after %d consecutive accepted ICP updates (valid again)` | `gate_recovery_accepts`（默认 10） | 降低可更快复锁 |
 | 配准本身失败 | `rough_score_thresh` / `refine_score_thresh` | 见第 4 节定位表 | 门限超过 `*_max_corr_dist²` 时恒真、失去意义 |
 | 更新率上不去 | 日志 `correspondence: rough ... refine ...` 与 `gate: ...`、`validity timeout ...s report ...s` | `refine_max_iteration` | 降低迭代数可提速（仓库记录：15 → 8 使 refine 阶段耗时减半，精度无损失，属**该序列上的实测**，换平台需复测） |
+| 锁定后周期性 `gate_not_valid`（而 localizer 日志 `valid=1`） | `/robot_pose_map/status` 的 `gate_answer_age_s` | robot_pose `gate_poll_period_s`（默认 0.25 s，steady 时钟，须 < `correction_validity_timeout_s`） | 应答年龄应远小于 1 s。localizer 已改为多线程执行器、`relocalize_check` 独立回调组，ICP 期间也能应答；旧版轮询用 ROS 时钟 0.5 s，慢于实时的仿真/回放里会超过 1 s 的 steady 信任期 |
 
 ```bash
 # 定位评测（含可用率）
@@ -388,7 +389,7 @@ python3 simulation/scripts/test_t2_speed.py     --run-dir /tmp/sim_A
 | `imu_init_window_s` | 静止窗时长；`> 0` 才启用静窗判定 | s | `0.0`（关闭） | `3.0` | **2.0–5.0**（四足平台必须有真正的静止窗）；`0` = 关闭 | 变大 ⇒ 需要更长的静止期，启动变慢；变小 ⇒ 零偏取自更短的窗，方差更大。**注意 `lio_highres.yaml` 省略了该键 ⇒ 静默退回计数模式** |
 | `imu_init_static_gyro_std` | 静窗判据：三轴陀螺标准差上限 | rad/s | `0.005` | `0.005` | **待实测** → 由静止段陀螺标准差导出（`tools/imu_allan_variance.py` 的静态性判据同源） | 过紧 ⇒ 永远判不出静止窗，每次都走超时回退并打印 `no static window within ...`；过松 ⇒ 把运动窗当成静止窗，零偏被污染 |
 | `imu_init_static_acc_dev` | 静窗判据 & 重力采纳判据：相对窗均值的最大偏差 | m/s² | `0.3` | `0.3` | **0.1–0.5** | 同时门控 `gravity_align` 的实测重力采纳（还需 `8.5 < \|a\| < 10.5`）。过紧 ⇒ 不采纳实测重力，退化为 9.81 常数 |
-| `imu_init_max_wait_s` | 最长等待；到点后**仅按时间**回退到"最安静窗" | s | `15.0` | `5.0` | **≥ `imu_init_window_s`**，5–30 | 设小了 ⇒ 快速回退（启动快），但零偏可能来自仍在运动的窗；设大了 ⇒ 四足平台可能等很久才起飞 |
+| `imu_init_max_wait_s` | 最长等待；到点后**仅按时间**回退到"最安静窗" | s | `15.0` | `5.0` | **≥ `imu_init_window_s`**，5–30 | 设小了 ⇒ 快速回退（启动快），但零偏可能来自仍在运动的窗；设大了 ⇒ 四足平台可能等很久才起飞。**已知局限**：初始化状态属于所选窗口的末端，之后到首帧点云之间只靠 IMU 递推；若 lio_node 收到 IMU 早、首帧点云晚且机器人已在走（节点重启、雷达驱动启动慢），这段递推可达十几秒。Gazebo（首帧晚于起步 13 s，仿真 IMU 近乎理想）：最安静窗 + 递推 17 s 得 ATE 6.2 cm；改选更近的窗（含起步加速段或运动段）反而因重力对齐偏差引入倾角，ATE 12.8–17.3 cm，因此保留"最安静窗"。真实 MEMS IMU 的长时递推漂移远大于仿真：**节点重启后应先静止再起步** |
 
 ### 3.4 估计器 / 门限 / 约束
 

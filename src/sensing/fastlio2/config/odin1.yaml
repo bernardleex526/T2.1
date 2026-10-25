@@ -53,7 +53,7 @@ imu_init_window_s: 3.0
 imu_init_static_gyro_std: 0.005
 imu_init_static_acc_dev: 0.3
 imu_init_max_wait_s: 5.0
-imu_lpf_enable: false       # see commons.h: the accel-only LPF delays accel vs gyro
+imu_lpf_enable: false       # when on, accel and gyro share one filter (no relative skew) but both lag the lidar by a few ms
 
 near_search_num: 5
 ieskf_max_iter: 5

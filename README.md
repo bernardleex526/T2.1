@@ -38,7 +38,7 @@
                                       v
 +----------------------------------------------------------------------------------+
 | 定位与因果预测层 (Localization Layer) - 【定位模式生效】                         |
-|   - localizer: 基于 NDT/ICP 的先验地图重定位，具备创新门控与 LockValidity 状态机 |
+|   - localizer: 基于两级 ICP 的先验地图重定位，具备创新门控与 LockValidity 状态机   |
 |   - robot_pose: 因果位姿预测器，支持 SO(3) 差分角速度外推与旋转杆臂合成          |
 |   - 定位发布 TF: map -> odom                                                     |
 +----------------------------------------------------------------------------------+
@@ -56,10 +56,10 @@
 
 仓库软件包拓扑可通过 `colcon list --base-paths src` 查询，核心算法与支持模块如下：
 
-- `fastlio2` (`src/sensing/fastlio2`)：激光-惯性里程计前端。维护 21 维系统状态（位置、姿态、速度、陀螺零偏、加表零偏、重力向量）；内置 ikd-Tree 动态点云索引；支持外部相机输入进行点云投影着色。
+- `fastlio2` (`src/sensing/fastlio2`)：激光-惯性里程计前端。维护 21 维误差状态（姿态、位置、LiDAR-IMU 外参旋转与平移、速度、陀螺零偏、加表零偏，各 3 维；重力模值在初始化时测得、方向对齐 -z 后固定，不在状态中；外参仅在 `esti_il: true` 时被观测更新）；内置 ikd-Tree 动态点云索引；支持外部相机输入进行点云投影着色。
 - `pgo` (`src/optimization/pgo`)：位姿图优化节点。集成 GTSAM iSAM2 平滑求解器与 Scan-Context 激光扫描环描述子，提供多重闭环检测与矢量一致性门控。
 - `hba` (`src/optimization/hba`)：一致性地图优化节点。通过局部点云面片与位姿残差迭代优化消除建图重影，提升全局地图一致性。
-- `localizer` (`src/localization/localizer`)：先验点云地图定位节点。集成配准算法（ICP/NDT）；实现两级创新量门控（`outlier_gate.h`）与锁有效性状态机（`lock_validity.h`），杜绝错配发散。
+- `localizer` (`src/localization/localizer`)：先验点云地图定位节点。两级 ICP 配准（粗配准 0.25 m + 精配准 0.1 m，含内点率门限）；实现两级创新量门控（`outlier_gate.h`）与锁有效性状态机（`lock_validity.h`），杜绝错配发散。
 - `robot_pose` (`src/localization/robot_pose`)：全局位姿综合与因果预测节点。支持从 `map` 到 `base_link` 的完整 TF 链路计算，提供针对当前时钟的 SO(3) 差分有界因果预测（`map_pose_current.hpp`）。
 - `interface` (`src/common/interface`)：系统统一自定义服务与消息接口（`Relocalize`, `IsValid`, `RefineMap`, `SaveMaps`, `SavePoses`, `SaveColoredPcd`）。
 - `universe_launch` / `sensing_launch`：系统顶层编排与集成启动包，管理传感器驱动、建图、重定位与导航节点拓扑。
@@ -352,11 +352,11 @@ python3 simulation/scripts/test_t3_localization.py --run-dir /tmp/sim_loc --ref-
 python3 tools/rslidar_pcl2_probe.py --topic /rslidar_points --once
 python3 tools/imu_allan_variance.py --bag imu_static --topic /imu/data --emit-yaml
 python3 tools/imu_gait_spectrum.py --bag walk_imu --topic /imu/data --emit-yaml
-python3 tools/odom_static_drift.py --bag static10 --topic /fastlio2/lio_odom
+python3 tools/odom_static_drift.py --bag static10 --topic /mapping/lio_odom
 python3 tools/preflight_config.py --config src/sensing/fastlio2/config/lio_orin_nx.yaml
 ```
 
-**自测**（`tests/test_probe_tools.py`，51 个用例，含已知参数合成数据的定值检验）：
+**自测**（`tests/test_probe_tools.py`，60 个用例，含已知参数合成数据的定值检验）：
 
 ```bash
 python3 -m pytest tests/test_probe_tools.py -q
@@ -375,6 +375,7 @@ python3 -m pytest tests/test_probe_tools.py -q
 - [WP2 T2.1 软件交接文档（去硬件）](docs/validation/software_handoff_20260930.md)
 - [本地仿真与指标核验验收报告](docs/validation/local_simulation_acceptance.md)
 - [硬件就绪整改验证记录（2026-10-07）](docs/validation/hardware_readiness_20261007.md)
+- [第二轮审查修复与验证记录（2026-10-25）](docs/validation/review_fixes_20261025.md)
 - [FastLIVO2 接口与坐标契约](docs/validation/04b73f5_fastlivo2_interface.md)
 - [算法参数定义、量纲与配置对照](docs/validation/04b73f5_param_notes.md)
 - [工程部署方案与平台契约](docs/validation/04b73f5_p3_deployment.md)

@@ -575,6 +575,15 @@ class TestPreflight(unittest.TestCase):
         rc2, out2 = self._run(self._mutated(pcl2_time_field="timestamp", pcl2_time_scale=1.0))
         self.assertEqual(rc2, 0, out2)
 
+    def test_nanosecond_timestamp_on_a_livox_pointcloud2_is_not_blocking(self):
+        """The Livox driver's PointCloud2 `timestamp` IS nanoseconds: 1e-9 is the right scale there
+        (the repository's own TIERS/MID360 replay config uses it), so only a reminder is printed."""
+        p = self._mutated(lidar_topic="/livox/lidar", pcl2_time_field="timestamp",
+                          pcl2_time_scale=1.0e-9)
+        rc, out = self._run(p)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nanoseconds", out)
+
     def test_missing_extrinsic_is_blocking(self):
         rc, out = self._run(self._mutated(ext_il=None))
         self.assertEqual(rc, 2, out)

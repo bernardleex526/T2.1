@@ -1,6 +1,8 @@
 #include "imu_processor.h"
 #include "imu_init.h"
 
+#include <algorithm>
+
 namespace
 {
 // C2.1: target magnitude of the accelerometer rescaling (upstream FAST-LIO2's G_m_s2).
@@ -77,8 +79,8 @@ void IMUProcessor::configureGaitFilter()
                 "Gait filter ACTIVE: %d section(s) at q=%.2f, fs=%.1f Hz | gyro[x=%d y=%d z=%d] "
                 "accel[x=%d y=%d z=%d] | group delay at 5 Hz = %.2f ms",
                 m_gait_filter.sectionCount(), opt.q, opt.sample_rate_hz,
-                (int)opt.filter_gyro_x, (int)opt.filter_gyro_y, (int)opt.filter_gyro_z,
-                (int)opt.filter_accel_x, (int)opt.filter_accel_y, (int)opt.filter_accel_z,
+                static_cast<int>(opt.filter_gyro_x), static_cast<int>(opt.filter_gyro_y), static_cast<int>(opt.filter_gyro_z),
+                static_cast<int>(opt.filter_accel_x), static_cast<int>(opt.filter_accel_y), static_cast<int>(opt.filter_accel_z),
                 m_gait_filter.groupDelaySeconds(5.0) * 1000.0);
 
     // Gyro filtered but accel not (or vice versa) means the two streams acquire a
@@ -142,9 +144,10 @@ bool IMUProcessor::initialize(SyncPackage &package)
         RCLCPP_WARN(m_logger, "IMU init: first-batch mode, %zu/%d samples spanning %.3fs",
                     i1 - i0, min_samples, m_imu_cache[i1 - 1].time - m_imu_cache[i0].time);
     if (plan.use_static_window)
-        RCLCPP_WARN(m_logger, "IMU init window [%zu,%zu)/%zu gyro_std=%.5f acc_dev=%.4f static=%d waited_out=%d",
-                    i0, i1, n, plan.gyro_std, plan.acc_dev, (int)plan.is_static, (int)plan.waited_out);
-    if (plan.waited_out)
+        RCLCPP_WARN(m_logger, "IMU init window [%zu,%zu)/%zu gyro_std=%.5f acc_dev=%.4f static=%d waited_out=%d remainder=%.3fs",
+                    i0, i1, n, plan.gyro_std, plan.acc_dev, static_cast<int>(plan.is_static), static_cast<int>(plan.waited_out),
+                    m_imu_cache.back().time - m_imu_cache[i1 - 1].time);
+    if (plan.waited_out && !plan.is_static)
         RCLCPP_WARN(m_logger, "IMU init: no static window within %.1fs; falling back to the quietest window (ends %.3fs before the newest IMU sample) with v=0 at its end",
                     m_config.imu_init_max_wait_s, m_imu_cache.back().time - m_imu_cache[i1 - 1].time);
 
@@ -314,20 +317,25 @@ void IMUProcessor::undistort(SyncPackage &package)
         m_poses_cache.emplace_back(offset, m_last_acc, m_last_gyro, m_kf->x().v, m_kf->x().t_wi, m_kf->x().r_wi);
     }
 
-    dt = propagate_time_end - imu_time_end;
-    m_kf->predict(inp, dt, m_Q);
+    // Propagate the tail from the last sample to the scan/image end.  With no new IMU sample in
+    // this package (stream gap) the state already sits at m_last_propagate_end_time, which is past
+    // m_last_imu.time: starting from the sample would integrate [sample, previous end] twice.
+    dt = propagate_time_end - std::max(imu_time_end, m_last_propagate_end_time);
+    if (dt > 0.0)
+        m_kf->predict(inp, dt, m_Q);
     m_last_imu = m_imu_cache.back();
-    m_last_propagate_end_time = propagate_time_end;
+    m_last_propagate_end_time = std::max(propagate_time_end, m_last_propagate_end_time);
 
-    if (package.lidar_end)
+    if (package.lidar_end && package.cloud && !package.cloud->empty())
     {
         M3D cur_r_wi = m_kf->x().r_wi;
         V3D cur_t_wi = m_kf->x().t_wi;
         M3D cur_r_il = m_kf->x().r_il;
         V3D cur_t_il = m_kf->x().t_il;
         auto it_pcl = package.cloud->points.end() - 1;
+        bool all_compensated = false; // the first point was reached: no earlier interval may touch it again
 
-        for (auto it_kp = m_poses_cache.end() - 1; it_kp != m_poses_cache.begin(); it_kp--)
+        for (auto it_kp = m_poses_cache.end() - 1; it_kp != m_poses_cache.begin() && !all_compensated; it_kp--)
         {
             auto head = it_kp - 1;
             auto tail = it_kp;
@@ -338,9 +346,9 @@ void IMUProcessor::undistort(SyncPackage &package)
             V3D imu_acc = tail->acc;
             V3D imu_gyro = tail->gyro;
 
-            for (; it_pcl->curvature / double(1000) > head->offset; it_pcl--)
+            for (; it_pcl->curvature / 1000.0 > head->offset; it_pcl--)
             {
-                dt = it_pcl->curvature / double(1000) - head->offset;
+                dt = it_pcl->curvature / 1000.0 - head->offset;
                 V3D point(it_pcl->x, it_pcl->y, it_pcl->z);
                 M3D point_rot = imu_r_wi * Sophus::SO3d::exp(imu_gyro * dt).matrix();
                 V3D point_pos = imu_t_wi + imu_vel * dt + 0.5 * imu_acc * dt * dt;
@@ -349,9 +357,13 @@ void IMUProcessor::undistort(SyncPackage &package)
                 it_pcl->y = p_compensate(1);
                 it_pcl->z = p_compensate(2);
                 if (it_pcl == package.cloud->points.begin())
+                {
+                    all_compensated = true;
                     break;
+                }
             }
         }
-        m_pushed = true;
     }
+    if (package.lidar_end)
+        m_pushed = true;
 }

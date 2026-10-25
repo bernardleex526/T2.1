@@ -28,9 +28,6 @@ LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_co
 
 void LidarProcessor::trimCloudMap()
 {
-    // ==================== 诊断代码开始 ====================
-    size_t before_size = m_ikdtree->size();
-    // ==================== 诊断代码结束 ====================
     m_local_map.cub_to_rm.clear();
     const State &state = m_kf->x();
     Eigen::Vector3d pos_lidar = state.t_wi + state.r_wi * state.t_il;
@@ -88,20 +85,6 @@ void LidarProcessor::trimCloudMap()
     // 删除局部地图之外的点云
     if (m_local_map.cub_to_rm.size() > 0)
         m_ikdtree->Delete_Point_Boxes(m_local_map.cub_to_rm);
-    // ==================== 诊断代码开始 ====================
-    size_t after_size = m_ikdtree->size();
-    size_t removed_count = before_size - after_size;
-    
-    // RCLCPP_INFO(m_logger,
-    //     "MAP_MANAGEMENT: Before=%zu, After=%zu, Removed=%zu, LocalMap=[%.1f,%.1f,%.1f]-[%.1f,%.1f,%.1f]",
-    //     before_size, after_size, removed_count,
-    //     m_local_map.local_map_corner.vertex_min[0], 
-    //     m_local_map.local_map_corner.vertex_min[1],
-    //     m_local_map.local_map_corner.vertex_min[2],
-    //     m_local_map.local_map_corner.vertex_max[0],
-    //     m_local_map.local_map_corner.vertex_max[1],
-    //     m_local_map.local_map_corner.vertex_max[2]);
-    // ==================== 诊断代码结束 ====================
     return;
 }
 
@@ -205,7 +188,6 @@ void LidarProcessor::process(SyncPackage &package)
 void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
 {
      // ==================== 诊断代码开始 ====================
-    auto total_start = std::chrono::high_resolution_clock::now();
     int total_points = m_cloud_down_lidar->size();
     int neighbor_success = 0;
     int plane_fit_success = 0;
@@ -280,15 +262,12 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
         }
     }
     // ==================== 诊断代码开始 ====================
-    auto total_end = std::chrono::high_resolution_clock::now();
-    double total_time = std::chrono::duration<double, std::milli>(total_end - total_start).count();
-
     // Diagnostics every 100 scans: point selection funnel.
     {
         static long loss_calls = 0;
         if ((loss_calls % 100) == 0)
             RCLCPP_WARN(m_logger,
-                        "FEATURE n=%ld total=%d neighborOK=%d planeOK=%d qualityOK=%d kdsize=%zu",
+                        "FEATURE n=%ld total=%d neighborOK=%d planeOK=%d qualityOK=%d kdsize=%d",
                         loss_calls, total_points, neighbor_success, plane_fit_success,
                         quality_pass, m_ikdtree->size());
         ++loss_calls;

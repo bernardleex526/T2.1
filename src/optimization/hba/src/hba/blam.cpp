@@ -1,4 +1,7 @@
 #include "blam.h"
+
+#include <map>
+#include <vector>
 VoxelKey VoxelKey::index(double x, double y, double z, double resolution, double bias)
 {
     V3D point(x, y, z);
@@ -295,49 +298,116 @@ void BLAM::buildVoxels()
 }
 void BLAM::updateJaccAndHess()
 {
+    // Exact gradient and Hessian of f = sum over planes of lambda_0(C), the smallest eigenvalue of
+    //     C = 1/N sum_j p_j p_j^T - mu mu^T,   p_j = R_i q_j + t_i  (q_j: point in its pose's frame),
+    // w.r.t. the increment of plusDelta (R <- R Exp(phi), t <- t + tau; x_i = [phi_i; tau_i]).
+    // Eigenvalue perturbation (u_k, lambda_k: eigenpairs of C, u = u_0):
+    //     d_a lambda    = u^T C_a u
+    //     d_ab lambda   = u^T C_ab u + 2 sum_{k=1,2} (u_k^T C_a u)(u_k^T C_b u) / (lambda_0 - lambda_k)
+    //     u^T C_a u     = 2/N sum_j (u.p_ja)(u.(p_j - mu))
+    //     u^T C_ab u    = 2/N sum_j [(u.p_jab)(u.(p_j - mu)) + (u.p_ja)(u.p_jb)] - 2 (u.mu_a)(u.mu_b)
+    //     u_k^T C_a u   = 1/N sum_j [(u_k.p_ja)(u.(p_j - mu)) + (u.p_ja)(u_k.(p_j - mu))]
+    // with p_j,phi = -R hat(q_j), p_j,tau = I, and p_j,phi_a phi_b = 1/2 R (e_a^ e_b^ + e_b^ e_a^) q_j.
+    // Every sum is at most quadratic in q, so per (plane, pose) it only needs the point cluster
+    // n, S1 = sum q, S2 = sum q q^T.  With w = R^T u, w_k = R^T u_k, c = u.(t - mu), c_k = u_k.(t - mu):
+    //     sum_j (u.(p_j-mu)) [p_j,phi^T u ; u]  = [-hat(w)(S2 w + c S1) ; (w.S1 + n c) u]      (gradient)
+    //     sum_j [p_j,x^T u][p_j,x^T u]^T        = [[hat(w) S2 hat(w)^T, -hat(w) S1 u^T], [., n u u^T]]
+    //     sum_j (u.(p_j-mu)) u^T p_j,phi phi    = 1/2 (S2 w w^T + w w^T S2) + c/2 (S1 w^T + w S1^T)
+    //                                             - (w^T S2 w + c w.S1) I
+    //     N (u.mu_x)                            = Q = [-hat(w) S1 ; n u]
+    //     N (u_k^T C_x u)                       = [-hat(w_k)(S2 w + c S1) - hat(w)(S2 w_k + c_k S1) ;
+    //                                              (w.S1 + n c) u_k + (w_k.S1 + n c_k) u]
+    // (This replaces a "merged point" form that averaged each pose's points: it dropped the per-pose
+    //  count, mapped points onto the wrong poses through a column-index slip in D_i, and could not see
+    //  a pose's own patch tilting about its centroid.)
     m_H.setZero();
     m_J.setZero();
-    for (size_t i = 0; i < m_planes.size(); i++)
+    struct Cluster
     {
-        OctoTree *plane_ptr = m_planes[i];
-        const PointVec &points = plane_ptr->mergedPoints();
-        Eigen::MatrixXd D_i = Eigen::MatrixXd::Zero(3 * points.size(), 6 * points.size());
-        Eigen::MatrixXd H_i = Eigen::MatrixXd::Zero(3 * points.size(), 3 * points.size());
-        Eigen::MatrixXd J_i = Eigen::MatrixXd::Zero(1, 3 * points.size());
-        Vec<uint32_t> idxs(points.size(), 0);
-        for (size_t m = 0; m < points.size(); m++)
-        {
-            const PointType &point1 = points[m];
-            V3D p1(point1.x, point1.y, point1.z);
-            V3D pl1(point1.lx, point1.ly, point1.lz);
-            idxs[m] = point1.id;
-            Pose &pose = m_poses[point1.id];
-            for (size_t n = 0; n < points.size(); n++)
-            {
-                const PointType &point2 = points[n];
-                V3D p2(point2.x, point2.y, point2.z);
-                H_i.block<3, 3>(m * 3, n * 3) = plane_ptr->dp2(p1, p2, m == n);
-            }
-            J_i.block<1, 3>(0, m * 3) = plane_ptr->dp(p1).transpose();
-            D_i.block<3, 3>(m * 3, m * 3) = -pose.r * Sophus::SO3d::hat(pl1);
-            D_i.block<3, 3>(m * 3, m * 3 + 3) = M3D::Identity();
-        }
-        Eigen::MatrixXd H_bar = D_i.transpose() * H_i * D_i; // 6 n * 6 n
-        Eigen::VectorXd J_bar = (J_i * D_i).transpose();
+        double n = 0.0;
+        V3D s1 = V3D::Zero();
+        M3D s2 = M3D::Zero();
+    };
+    using V6D = Eigen::Matrix<double, 6, 1>;
+    for (OctoTree *plane_ptr : m_planes)
+    {
+        const PointVec &points = plane_ptr->points();
+        const double N = static_cast<double>(points.size());
+        if (N < 1.0)
+            continue;
+        const V3D mu = plane_ptr->mean();
+        const M3D U = plane_ptr->eigenVec();
+        const V3D lam = plane_ptr->eigenVal();
+        const V3D u = U.col(0);
 
-        for (size_t m = 0; m < idxs.size(); m++)
+        std::map<uint32_t, Cluster> clusters;
+        for (const PointType &pt : points)
         {
-            uint32_t p_id1 = idxs[m];
-            for (size_t n = m; n < idxs.size(); n++)
-            {
-                uint32_t p_id2 = idxs[n];
-                m_H.block<6, 6>(p_id1 * 6, p_id2 * 6) += H_bar.block<6, 6>(m * 6, n * 6);
-                if (m == n)
-                    continue;
-                m_H.block<6, 6>(p_id2 * 6, p_id1 * 6) += H_bar.block<6, 6>(n * 6, m * 6);
-            }
-            m_J.block<6, 1>(p_id1 * 6, 0) += J_bar.block<6, 1>(m * 6, 0);
+            const V3D q(pt.lx, pt.ly, pt.lz);
+            Cluster &c = clusters[pt.id];
+            c.n += 1.0;
+            c.s1 += q;
+            c.s2 += q * q.transpose();
         }
+
+        const size_t m = clusters.size();
+        std::vector<uint32_t> ids;
+        std::vector<V6D> Q(m), V1(m), V2(m);
+        std::vector<M6D> A(m);
+        size_t idx = 0;
+        for (const auto &kv : clusters)
+        {
+            const Cluster &cl = kv.second;
+            const Pose &pose = m_poses[kv.first];
+            const V3D w = pose.r.transpose() * u;
+            const double c = u.dot(pose.t - mu);
+            const M3D hw = Sophus::SO3d::hat(w);
+            const V3D s2w = cl.s2 * w;
+            const V3D dsum_q = s2w + c * cl.s1;       // sum_j (u.(p_j - mu)) q_j
+            const double dsum = w.dot(cl.s1) + cl.n * c; // sum_j (u.(p_j - mu))
+
+            m_J.block<3, 1>(kv.first * 6, 0) += 2.0 / N * (-hw * dsum_q);
+            m_J.block<3, 1>(kv.first * 6 + 3, 0) += 2.0 / N * dsum * u;
+
+            M6D a = M6D::Zero();
+            const M3D t1 = 0.5 * (s2w * w.transpose() + w * s2w.transpose()) +
+                           0.5 * c * (cl.s1 * w.transpose() + w * cl.s1.transpose()) -
+                           (w.dot(s2w) + c * w.dot(cl.s1)) * M3D::Identity();
+            a.block<3, 3>(0, 0) = t1 + hw * cl.s2 * hw.transpose();
+            a.block<3, 3>(0, 3) = -hw * cl.s1 * u.transpose();
+            a.block<3, 3>(3, 0) = a.block<3, 3>(0, 3).transpose();
+            a.block<3, 3>(3, 3) = cl.n * u * u.transpose();
+            A[idx] = 2.0 / N * a;
+
+            Q[idx].head<3>() = -hw * cl.s1;
+            Q[idx].tail<3>() = cl.n * u;
+            for (int k = 1; k <= 2; ++k)
+            {
+                const V3D uk = U.col(k);
+                const V3D wk = pose.r.transpose() * uk;
+                const double ck = uk.dot(pose.t - mu);
+                V6D v;
+                v.head<3>() = -Sophus::SO3d::hat(wk) * dsum_q - hw * (cl.s2 * wk + ck * cl.s1);
+                v.tail<3>() = dsum * uk + (wk.dot(cl.s1) + cl.n * ck) * u;
+                (k == 1 ? V1[idx] : V2[idx]) = v / N;
+            }
+            ids.push_back(kv.first);
+            ++idx;
+        }
+
+        const double g1 = lam(0) - lam(1), g2 = lam(0) - lam(2);
+        for (size_t i = 0; i < m; ++i)
+            for (size_t l = 0; l < m; ++l)
+            {
+                M6D h = -2.0 / (N * N) * Q[i] * Q[l].transpose();
+                if (std::abs(g1) > 1e-12)
+                    h += 2.0 / g1 * V1[i] * V1[l].transpose();
+                if (std::abs(g2) > 1e-12)
+                    h += 2.0 / g2 * V2[i] * V2[l].transpose();
+                if (i == l)
+                    h += A[i];
+                m_H.block<6, 6>(ids[i] * 6, ids[l] * 6) += h;
+            }
     }
 }
 void BLAM::optimize()
@@ -383,6 +453,45 @@ void BLAM::optimize()
         if (std::abs(residual - residual_new) < 1e-9)
             break;
     }
+    // relativeInformation() reads the Hessian: build it at the FINAL poses (the last accepted step
+    // moved them after the last build)
+    updatePlanesByPoses(m_poses);
+    updateJaccAndHess();
+}
+
+M6D BLAM::relativeInformation(size_t i, size_t j) const
+{
+    // m_H is in BLAM's increment delta_k = (phi_k right rotation, tau_k world translation).  Re-express
+    // it in LEFT (world) perturbations zeta_k = [w_k; v_k], T_k <- Exp(zeta_k) T_k:
+    //     phi_k = R_k^T w_k,   tau_k = v_k - hat(t_k) w_k     =>  delta_k = B_k zeta_k.
+    // A common zeta moves the whole window rigidly and leaves every lambda_min unchanged, so in these
+    // coordinates the quadratic form is a block Laplacian (zero block-row sums) and decomposes exactly
+    // into pairwise terms:  z^T H z = sum_{a<b} (z_a - z_b)^T (-sym H_ab) (z_a - z_b).
+    // Hence the pair (i, j) carries Lambda_z = -sym(B_i^T H_ij B_j) (the old code used +H_ij in the
+    // delta coordinates: wrong sign, wrong frame, not symmetric).  GTSAM's BetweenFactor error e is the
+    // right perturbation of T_i^-1 T_j, and z_j - z_i = Ad(T_j) e, so Lambda_e = Ad^T Lambda_z Ad with
+    // Ad(T) = [[R, 0], [hat(t) R, R]] for the [rot; trans] ordering.  The approximate (merged-point)
+    // Hessian is only nearly gauge invariant, so the result is projected onto the PD cone.
+    auto B = [this](size_t k) {
+        M6D b = M6D::Zero();
+        b.block<3, 3>(0, 0) = m_poses[k].r.transpose();
+        b.block<3, 3>(3, 0) = -Sophus::SO3d::hat(m_poses[k].t);
+        b.block<3, 3>(3, 3) = M3D::Identity();
+        return b;
+    };
+    const M6D h_ij = m_H.block<6, 6>(6 * i, 6 * j);
+    const M6D hz = B(i).transpose() * h_ij * B(j);
+    const M6D lz = -0.5 * (hz + hz.transpose());
+    M6D ad = M6D::Zero();
+    ad.block<3, 3>(0, 0) = m_poses[j].r;
+    ad.block<3, 3>(3, 0) = Sophus::SO3d::hat(m_poses[j].t) * m_poses[j].r;
+    ad.block<3, 3>(3, 3) = m_poses[j].r;
+    M6D le = ad.transpose() * lz * ad;
+    le = 0.5 * (le + le.transpose());
+    Eigen::SelfAdjointEigenSolver<M6D> es(le);
+    const double floor = 1e-6 * std::max(es.eigenvalues().maxCoeff(), 1e-12);
+    const Eigen::Matrix<double, 6, 1> ev = es.eigenvalues().cwiseMax(floor);
+    return es.eigenvectors() * ev.asDiagonal() * es.eigenvectors().transpose();
 }
 
 double BLAM::updatePlanesByPoses(const Vec<Pose> &poses)
